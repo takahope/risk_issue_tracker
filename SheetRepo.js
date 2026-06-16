@@ -92,9 +92,28 @@ const SheetRepo = (function () {
   function rowToObject_(headers, row) {
     const obj = {};
     headers.forEach((header, i) => {
-      obj[header] = row[i];
+      obj[header] = toSerializableCell_(row[i]);
     });
     return obj;
+  }
+
+  /**
+   * 序列化保護：把 getValues() 可能讀出的 Date 物件轉成字串，
+   * 避免後端把 Sheets 的 Date 直接回傳給前端造成序列化失敗或前端
+   * 對其呼叫字串方法（如 split）而中斷。
+   *
+   * 規則：純日期（時分秒皆為 0）輸出 yyyy-MM-dd；帶時間者輸出
+   * yyyy-MM-dd HH:mm:ss。非 Date 值原樣回傳。
+   *
+   * @param {*} value - 單一儲存格值
+   * @returns {*} 可安全序列化的值
+   */
+  function toSerializableCell_(value) {
+    if (Object.prototype.toString.call(value) !== '[object Date]') return value;
+    if (isNaN(value.getTime())) return '';
+    const tz = 'Asia/Taipei';
+    const hasTime = value.getHours() + value.getMinutes() + value.getSeconds() > 0;
+    return Utilities.formatDate(value, tz, hasTime ? 'yyyy-MM-dd HH:mm:ss' : 'yyyy-MM-dd');
   }
 
   function objectToRow_(headers, obj) {

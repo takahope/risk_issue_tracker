@@ -38,7 +38,14 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // ── 啟動 ──
-document.addEventListener('DOMContentLoaded', init);
+// 不可只依賴 DOMContentLoaded：在 GAS 沙盒 iframe 中，此事件有時在腳本註冊
+// 監聽器之前就已觸發，導致 init() 永遠不執行、畫面卡在載入中。
+// 因此先檢查 document.readyState，已就緒則直接啟動，否則才掛監聽器。
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
 
 async function init() {
   try {
@@ -68,7 +75,7 @@ function renderBootError(err) {
     '<li>② 確認是用最新「部署」的 /exec 網址，且已建立新版本。</li>' +
     '<li>③ 開發者工具 Console（F12）查看第一個紅色錯誤訊息。</li>' +
     '</ul>' +
-    '<button class="btn btn--primary" onclick="location.reload()">重新載入</button>';
+    '<button class="btn btn--primary" onclick="init()">重新載入</button>';
 }
 
 /** 依角色隱藏管理者專屬功能；填入使用者資訊。 */
@@ -81,7 +88,12 @@ function applyRolePermissions() {
 }
 
 function bindNav() {
-  $('#nav').addEventListener('click', (e) => {
+  // 以 dataset 旗標防止 init() 重試時重複綁定造成事件多次觸發。
+  const nav = $('#nav');
+  if (nav.dataset.initialized) return;
+  nav.dataset.initialized = '1';
+
+  nav.addEventListener('click', (e) => {
     const btn = e.target.closest('.nav__item');
     if (btn) switchView(btn.dataset.view);
   });
@@ -115,7 +127,7 @@ async function renderList() {
   view.innerHTML = '<p class="muted">載入風險資料中…</p>';
   try {
     State.risks = await gas('api_listRisks');
-  } catch (err) { return toast(err.message || err, 'err'); }
+  } catch (err) { return renderLoadError('載入風險清單失敗', err); }
 
   if (State.risks.length === 0) {
     view.innerHTML = emptyState('目前沒有風險紀錄', State.session.isAdmin ? '可從「新增風險」開始建立第一筆。' : '尚未有風險指派給您。');
@@ -492,7 +504,7 @@ async function renderNotify() {
   view.innerHTML = '<p class="muted">載入未結案風險…</p>';
   let risks;
   try { risks = (await gas('api_listRisks')).filter((r) => r['當前狀態'] !== '已結案 (Closed)'); }
-  catch (err) { return toast(err.message || err, 'err'); }
+  catch (err) { return renderLoadError('載入未結案風險失敗', err); }
 
   if (risks.length === 0) { view.innerHTML = emptyState('沒有未結案風險', '所有風險都已結案，無需通知。'); return; }
 
@@ -602,7 +614,7 @@ async function renderSettings() {
   const view = $('#view');
   view.innerHTML = '<p class="muted">載入設定…</p>';
   let s;
-  try { s = await gas('api_getSettings'); } catch (err) { return toast(err.message || err, 'err'); }
+  try { s = await gas('api_getSettings'); } catch (err) { return renderLoadError('載入設定失敗', err); }
 
   view.innerHTML = `
     <div class="panel">
@@ -643,6 +655,20 @@ async function renderSettings() {
 // ════════════════════════════════════════
 function emptyState(title, desc) {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(desc)}</p></div>`;
+}
+
+/**
+ * 把資料區塊的「載入中」收斂成可見的錯誤狀態與重試入口，
+ * 避免 API 失敗時畫面永遠停在「載入中…」（僅 toast 一閃即逝）。
+ * 重試直接重畫目前分頁。
+ * @param {string} title - 錯誤標題
+ * @param {*} err - 錯誤物件
+ */
+function renderLoadError(title, err) {
+  const detail = esc((err && err.message) || err || '請稍後再試，或聯絡管理員。');
+  $('#view').innerHTML =
+    `<div class="empty"><h3>${esc(title)}</h3><p>${detail}</p>` +
+    `<button class="btn btn--primary" onclick="switchView(State.currentView)">重試</button></div>`;
 }
 
 function openModal(html) { $('#modalPanel').innerHTML = html; $('#modal').hidden = false; }
