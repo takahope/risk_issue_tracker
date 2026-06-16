@@ -35,6 +35,36 @@ function setup() {
   SpreadsheetApp.getActiveSpreadsheet().toast('已建立「資安風險追蹤表」與「矯正缺失單」工作表。', '初始化完成', 5);
 }
 
+/**
+ * 診斷函式：在編輯器直接執行（或由前端呼叫），用來判斷「卡在載入中」
+ * 是前端通道問題還是後端資料問題。回傳值刻意保持輕量且必為可序列化。
+ *
+ * 判讀：
+ *   - 在編輯器執行能看到 log → 後端正常，問題在前端 google.script.run 通道
+ *     （多帳號登入 / 部署版本過舊）。
+ *   - 執行就拋錯 → 後端設定問題，依錯誤訊息修正（多半是 HR 試算表 ID 無存取權）。
+ */
+function getAppDebugInfo() {
+  const info = {
+    時間: Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd HH:mm:ss'),
+    執行者email: '',
+    角色: '',
+    管理者清單筆數: 0,
+    HR試算表ID是否設定: false,
+    人員主檔人數: -1,
+    主表存在: false,
+  };
+  try { info.執行者email = Session.getActiveUser().getEmail(); } catch (e) { info.執行者email = '取不到：' + e.message; }
+  try { info.角色 = AuthService.getCurrentRole(); } catch (e) { info.角色 = '錯誤：' + e.message; }
+  try { info.管理者清單筆數 = SettingsService.getAdminEmails().length; } catch (e) {}
+  try { info.HR試算表ID是否設定 = !!SettingsService.get(CONFIG.PROP_KEYS.HR_SPREADSHEET_ID); } catch (e) {}
+  try { info.人員主檔人數 = HrService.listPeople().length; } catch (e) { info.人員主檔人數 = '讀取失敗：' + e.message; }
+  try { info.主表存在 = !!SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.MAIN_SHEET); } catch (e) { info.主表存在 = '無綁定試算表：' + e.message; }
+
+  console.log(JSON.stringify(info, null, 2));
+  return info;
+}
+
 // ══════════════════════════════════════════════
 // 前端 API — 讀取類（所有登入者可用）
 // ══════════════════════════════════════════════

@@ -4,12 +4,24 @@
    原則：薄狀態、依後端 schema 動態渲染表單、可重用人員選擇器。
    ============================================================ */
 
-/** 將 google.script.run 包成 Promise，讓非同步流程以 async/await 撰寫。 */
+/**
+ * 將 google.script.run 包成 Promise，讓非同步流程以 async/await 撰寫。
+ * 加上 20 秒逾時：若 google.script.run 兩個 handler 都不觸發（常見於多個
+ * Google 帳號同時登入、或部署版本過舊導致通道無法建立），把「永久轉圈」
+ * 收斂成一個可診斷的錯誤，而非讓畫面卡死。
+ */
 function gas(fnName, ...args) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn) => (val) => { if (settled) return; settled = true; clearTimeout(timer); fn(val); };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(fnName + ' 逾時：伺服器 20 秒內沒有回應。常見原因：瀏覽器同時登入多個 Google 帳號，或部署未更新版本。請見下方排查步驟。'));
+    }, 20000);
     google.script.run
-      .withSuccessHandler(resolve)
-      .withFailureHandler(reject)
+      .withSuccessHandler(done(resolve))
+      .withFailureHandler(done(reject))
       [fnName](...args);
   });
 }
@@ -38,8 +50,25 @@ async function init() {
     $('#shell').hidden = false;
     switchView('list');
   } catch (err) {
-    $('#boot').innerHTML = '<p class="boot__text">載入失敗：' + esc(err.message || err) + '</p>';
+    renderBootError(err);
   }
+}
+
+/**
+ * 載入失敗時，把啟動遮罩換成可見的錯誤狀態與重試入口，
+ * 並列出最常見的排查方向，避免使用者只看到無限轉圈。
+ */
+function renderBootError(err) {
+  const msg = esc((err && err.message) || err || '未知錯誤');
+  $('#boot').innerHTML =
+    '<div class="boot__mark" style="animation:none;">!</div>' +
+    '<p class="boot__text" style="max-width:420px;text-align:center;color:#ffd9d2;">載入失敗：' + msg + '</p>' +
+    '<ul style="color:rgba(234,250,244,.75);font-size:13px;line-height:1.9;max-width:420px;text-align:left;">' +
+    '<li>① 改用「無痕視窗」開啟，或先登出其他 Google 帳號（只留一個）。</li>' +
+    '<li>② 確認是用最新「部署」的 /exec 網址，且已建立新版本。</li>' +
+    '<li>③ 開發者工具 Console（F12）查看第一個紅色錯誤訊息。</li>' +
+    '</ul>' +
+    '<button class="btn btn--primary" onclick="location.reload()">重新載入</button>';
 }
 
 /** 依角色隱藏管理者專屬功能；填入使用者資訊。 */
