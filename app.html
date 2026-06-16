@@ -1,0 +1,665 @@
+<script>
+/* ============================================================
+   高風險追蹤系統 — 前端應用邏輯
+   原則：薄狀態、依後端 schema 動態渲染表單、可重用人員選擇器。
+   ============================================================ */
+
+/** 將 google.script.run 包成 Promise，讓非同步流程以 async/await 撰寫。 */
+function gas(fnName, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(reject)
+      [fnName](...args);
+  });
+}
+
+const State = {
+  session: null,   // { email, name, role, isAdmin }
+  meta: null,      // 表單中繼資料（來源/選項/schema/人員）
+  risks: [],
+  currentView: 'list',
+};
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ── 啟動 ──
+document.addEventListener('DOMContentLoaded', init);
+
+async function init() {
+  try {
+    State.session = await gas('api_getSession');
+    State.meta = await gas('api_getFormMetadata');
+    applyRolePermissions();
+    bindNav();
+    $('#boot').hidden = true;
+    $('#shell').hidden = false;
+    switchView('list');
+  } catch (err) {
+    $('#boot').innerHTML = '<p class="boot__text">載入失敗：' + esc(err.message || err) + '</p>';
+  }
+}
+
+/** 依角色隱藏管理者專屬功能；填入使用者資訊。 */
+function applyRolePermissions() {
+  const s = State.session;
+  $('#userName').textContent = s.name || s.email || '未具名';
+  $('#userRole').textContent = s.isAdmin ? '管理者' : '處理者';
+  $('#userAvatar').textContent = (s.name || s.email || '?').slice(0, 1).toUpperCase();
+  if (!s.isAdmin) $$('[data-admin]').forEach((el) => (el.hidden = true));
+}
+
+function bindNav() {
+  $('#nav').addEventListener('click', (e) => {
+    const btn = e.target.closest('.nav__item');
+    if (btn) switchView(btn.dataset.view);
+  });
+  $('#modal').addEventListener('click', (e) => { if (e.target.dataset.close !== undefined) closeModal(); });
+}
+
+const VIEW_META = {
+  list:     { title: '風險清單', desc: '追蹤所有資安風險的處理進度', render: renderList },
+  create:   { title: '新增風險', desc: '依發現來源填寫對應表單欄位', render: renderCreate },
+  notify:   { title: '通知中心', desc: '寄信通知尚未結案風險的處理人', render: renderNotify },
+  io:       { title: '匯入匯出', desc: '依發現來源匯入 CSV / Excel，或匯出 CSV', render: renderIO },
+  settings: { title: '系統設定', desc: '人員主檔、佐證資料夾與管理者設定', render: renderSettings },
+};
+
+function switchView(view) {
+  if (!State.session.isAdmin && view !== 'list') view = 'list';
+  State.currentView = view;
+  $$('.nav__item').forEach((b) => b.classList.toggle('is-active', b.dataset.view === view));
+  const meta = VIEW_META[view];
+  $('#viewTitle').textContent = meta.title;
+  $('#viewDesc').textContent = meta.desc;
+  $('#topActions').innerHTML = '';
+  meta.render();
+}
+
+// ════════════════════════════════════════
+// 風險清單
+// ════════════════════════════════════════
+async function renderList() {
+  const view = $('#view');
+  view.innerHTML = '<p class="muted">載入風險資料中…</p>';
+  try {
+    State.risks = await gas('api_listRisks');
+  } catch (err) { return toast(err.message || err, 'err'); }
+
+  if (State.risks.length === 0) {
+    view.innerHTML = emptyState('目前沒有風險紀錄', State.session.isAdmin ? '可從「新增風險」開始建立第一筆。' : '尚未有風險指派給您。');
+    return;
+  }
+
+  view.innerHTML =
+    toolbarHtml() +
+    '<div class="risk-grid" id="riskGrid"></div>';
+
+  bindListFilters();
+  paintRiskGrid(State.risks);
+}
+
+function toolbarHtml() {
+  const sources = State.meta.options.SOURCES.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  const statuses = State.meta.options.STATUSES.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  return `
+    <div class="toolbar">
+      <input type="search" id="fltKeyword" placeholder="搜尋標題 / 風險ID…">
+      <select id="fltSource"><option value="">全部來源</option>${sources}</select>
+      <select id="fltStatus"><option value="">全部狀態</option>${statuses}</select>
+    </div>`;
+}
+
+function bindListFilters() {
+  ['#fltKeyword', '#fltSource', '#fltStatus'].forEach((sel) => {
+    $(sel).addEventListener('input', applyFilters);
+  });
+}
+
+function applyFilters() {
+  const kw = $('#fltKeyword').value.trim().toLowerCase();
+  const src = $('#fltSource').value;
+  const st = $('#fltStatus').value;
+  const filtered = State.risks.filter((r) =>
+    (!kw || (r['風險標題'] + r['風險ID']).toLowerCase().includes(kw)) &&
+    (!src || r['發現來源'] === src) &&
+    (!st || r['當前狀態'] === st)
+  );
+  paintRiskGrid(filtered);
+}
+
+function paintRiskGrid(risks) {
+  const grid = $('#riskGrid');
+  if (risks.length === 0) { grid.innerHTML = emptyState('查無符合條件的風險', '請調整篩選條件。'); return; }
+  grid.innerHTML = risks.map(riskCardHtml).join('');
+  $$('.risk-card', grid).forEach((card) => card.addEventListener('click', () => openRiskDetail(card.dataset.id)));
+}
+
+function riskCardHtml(r) {
+  const people = (r['處理人List'] || []).join('、') || '<span class="muted">未指派</span>';
+  const itemBadge = (r.items && r.items.length) ? `<span class="tag tag--progress">${r.items.length} 個項次</span>` : '';
+  return `
+    <article class="risk-card" data-id="${esc(r['風險ID'])}">
+      <div class="risk-card__top">
+        <span class="risk-card__id">${esc(r['風險ID'])}</span>
+        ${statusTag(r['當前狀態'])}
+      </div>
+      <h3 class="risk-card__title">${esc(r['風險標題'])}</h3>
+      <div class="risk-card__meta">
+        <span>${esc(r['發現來源'])}</span>·${levelTag(r['風險等級'])} ${itemBadge}
+      </div>
+      <div class="risk-card__people"><b>處理人</b>：${people}</div>
+    </article>`;
+}
+
+function statusTag(status) {
+  const map = { '待處理 (Open)': 'open', '處理中 (In Progress)': 'progress', '待驗證 (To Verify)': 'verify', '已結案 (Closed)': 'closed' };
+  return `<span class="tag tag--${map[status] || 'open'}">${esc(status || '—')}</span>`;
+}
+function levelTag(level) {
+  const map = { '極高 (Critical)': 'crit', '高 (High)': 'high', '中 (Medium)': 'mid', '低 (Low)': 'low' };
+  return `<span class="tag tag--${map[level] || 'mid'}">${esc(level || '—')}</span>`;
+}
+
+// ── 風險詳情浮層 ──
+async function openRiskDetail(riskId) {
+  const r = State.risks.find((x) => x['風險ID'] === riskId);
+  if (!r) return;
+  const isAdmin = State.session.isAdmin;
+
+  const itemsHtml = (r.items || []).map((it) => `
+    <div class="detail-item">
+      <b>項次 ${esc(it['項次'])}</b>
+      <dl class="kv" style="margin-top:8px;">
+        <dt>建議改善事項</dt><dd>${esc(it['建議改善事項'])}</dd>
+        <dt>發生原因</dt><dd>${esc(it['發生原因'])}</dd>
+        <dt>改善措施</dt><dd>${esc(it['改善措施'])}</dd>
+        <dt>預定完成</dt><dd>${esc(it['預定完成時間'])}</dd>
+        <dt>執行進度</dt><dd>${esc(it['執行進度'])}</dd>
+        <dt>處理人</dt><dd>${esc(it['處理人'])}</dd>
+      </dl>
+    </div>`).join('');
+
+  const evidence = r['佐證連結']
+    ? '<div class="evidence-list">' + String(r['佐證連結']).split('\n').map((line) => {
+        const url = (line.match(/https?:\/\/\S+/) || [''])[0];
+        return url ? `<a href="${esc(url)}" target="_blank">${esc(line)}</a>` : `<span>${esc(line)}</span>`;
+      }).join('') + '</div>'
+    : '<span class="muted">尚無佐證</span>';
+
+  openModal(`
+    <div class="modal__head">
+      <div>
+        <div class="modal__title">${esc(r['風險標題'])}</div>
+        <div class="mono muted" style="font-size:12px;">${esc(r['風險ID'])}</div>
+      </div>
+      <button class="icon-btn" data-close>×</button>
+    </div>
+    <div class="modal__body">
+      <dl class="kv">
+        <dt>發現來源</dt><dd>${esc(r['發現來源'])}</dd>
+        <dt>風險描述</dt><dd>${esc(r['風險描述'])}</dd>
+        <dt>風險等級</dt><dd>${levelTag(r['風險等級'])}</dd>
+        <dt>處理方式</dt><dd>${esc(r['處理方式'])}</dd>
+        <dt>當前狀態</dt><dd id="dtStatus">${statusTag(r['當前狀態'])}</dd>
+        <dt>處理人</dt><dd>${esc((r['處理人List'] || []).join('、'))}</dd>
+        <dt>預計完成日</dt><dd>${esc(r['預計完成日'])}</dd>
+        <dt>最後更新</dt><dd class="mono">${esc(r['最後更新時間'])}</dd>
+        <dt>佐證</dt><dd>${evidence}</dd>
+      </dl>
+      ${itemsHtml ? `<div class="detail-items"><div class="section-label">矯正缺失單項次</div>${itemsHtml}</div>` : ''}
+
+      <div class="panel" style="margin-top:16px;">
+        <div class="section-label">更新狀態 / 上傳佐證</div>
+        <div class="form-grid">
+          <div class="field">
+            <label class="field__label">當前狀態</label>
+            <select id="editStatus">${State.meta.options.STATUSES.map((s) => `<option ${s === r['當前狀態'] ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
+          </div>
+          <div class="field">
+            <label class="field__label">上傳佐證檔案</label>
+            <input type="file" id="evidenceFile" multiple>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal__foot">
+      ${isAdmin ? `<button class="btn btn--danger" id="btnDelete">刪除風險</button>` : ''}
+      <button class="btn btn--ghost" data-close>關閉</button>
+      <button class="btn btn--primary" id="btnSaveDetail">儲存變更</button>
+    </div>
+  `);
+
+  $('#btnSaveDetail').addEventListener('click', () => saveRiskDetail(riskId));
+  if (isAdmin) $('#btnDelete').addEventListener('click', () => confirmDelete(riskId));
+}
+
+async function saveRiskDetail(riskId) {
+  const btn = $('#btnSaveDetail');
+  setLoading(btn, true);
+  try {
+    const files = await readFiles($('#evidenceFile').files);
+    if (files.length) await gas('api_uploadEvidence', riskId, files);
+    await gas('api_updateRisk', riskId, { '當前狀態': $('#editStatus').value });
+    toast('已儲存變更', 'ok');
+    closeModal();
+    renderList();
+  } catch (err) { toast(err.message || err, 'err'); }
+  finally { setLoading(btn, false); }
+}
+
+function confirmDelete(riskId) {
+  openConfirm('確認刪除風險', '此動作將一併刪除其矯正缺失項次，且無法復原。確定刪除？', async () => {
+    try { await gas('api_deleteRisk', riskId); toast('已刪除', 'ok'); closeModal(); renderList(); }
+    catch (err) { toast(err.message || err, 'err'); }
+  });
+}
+
+// ════════════════════════════════════════
+// 新增風險（依 schema 動態渲染）
+// ════════════════════════════════════════
+function renderCreate() {
+  const sources = State.meta.options.SOURCES.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  $('#view').innerHTML = `
+    <div class="panel">
+      <div class="field" style="max-width:320px;">
+        <label class="field__label">發現來源 <span class="req">*</span></label>
+        <select id="srcSelect"><option value="">請選擇發現來源…</option>${sources}</select>
+      </div>
+    </div>
+    <form id="riskForm" hidden></form>`;
+  $('#srcSelect').addEventListener('change', (e) => renderFormForSource(e.target.value));
+}
+
+const PEOPLE_PICKERS = []; // 追蹤本次表單的所有人員選擇器以便取值
+
+function renderFormForSource(source) {
+  PEOPLE_PICKERS.length = 0;
+  const form = $('#riskForm');
+  if (!source) { form.hidden = true; form.innerHTML = ''; return; }
+
+  const schema = State.meta.schemas[source] || State.meta.defaultSchema;
+  const baseFields = schema.baseFields || State.meta.defaultSchema.baseFields;
+
+  form.hidden = false;
+  form.innerHTML = `
+    <div class="panel">
+      <div class="section-label">風險基本資料</div>
+      <div class="form-grid" id="baseFields"></div>
+    </div>
+    ${schema.subTable ? subTableSectionHtml(schema.subTable) : ''}
+    <div class="topbar__actions" style="margin-top:16px;">
+      <button type="button" class="btn btn--ghost" onclick="renderCreate()">重設</button>
+      <button type="submit" class="btn btn--primary" id="btnCreate">建立風險</button>
+    </div>`;
+
+  renderFields($('#baseFields'), baseFields, {});
+
+  if (schema.subTable) {
+    $('#btnAddItem').addEventListener('click', () => addItemCard(schema.subTable));
+    addItemCard(schema.subTable); // 預設帶一個項次
+  }
+
+  form.addEventListener('submit', (e) => { e.preventDefault(); submitCreate(source, schema); });
+}
+
+/** 依欄位定義陣列渲染表單欄位（含人員選擇器）。 */
+function renderFields(container, fields, values) {
+  container.innerHTML = '';
+  fields.forEach((f) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'field' + (f.type === 'textarea' || f.type === 'people' ? ' field--full' : '');
+    wrap.innerHTML = `<label class="field__label">${esc(f.label)}${f.required ? ' <span class="req">*</span>' : ''}</label>`;
+    wrap.appendChild(buildInput(f, values[f.key]));
+    container.appendChild(wrap);
+  });
+}
+
+/** 依欄位 type 建立輸入元素（Map 取代分支）。 */
+function buildInput(field, value) {
+  const builders = {
+    textarea: () => { const t = document.createElement('textarea'); t.value = value || ''; return t; },
+    date: () => { const i = document.createElement('input'); i.type = 'date'; i.value = value || ''; return i; },
+    select: () => {
+      const s = document.createElement('select');
+      (State.meta.options[field.optionsKey] || []).forEach((o) => {
+        const opt = document.createElement('option'); opt.value = o; opt.textContent = o;
+        if (o === value) opt.selected = true; s.appendChild(opt);
+      });
+      return s;
+    },
+    people: () => buildPeoplePicker(field, value),
+    text: () => { const i = document.createElement('input'); i.type = 'text'; i.value = value || ''; return i; },
+  };
+  const el = (builders[field.type] || builders.text)();
+  el.dataset.key = field.key;
+  return el;
+}
+
+// ── 可重用人員選擇器（chip 多選，主表與子表項次共用）──
+function buildPeoplePicker(field, preset) {
+  const root = document.createElement('div');
+  root.className = 'people';
+  root.innerHTML = `
+    <div class="people__box"><input class="people__input" placeholder="輸入姓名搜尋…"></div>
+    <div class="people__menu" hidden></div>`;
+  const box = $('.people__box', root);
+  const input = $('.people__input', root);
+  const menu = $('.people__menu', root);
+  const selected = [];
+  const people = State.meta.people || [];
+
+  function renderChips() {
+    $$('.chip', box).forEach((c) => c.remove());
+    selected.forEach((name) => {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.innerHTML = `${esc(name)} <button type="button" aria-label="移除">×</button>`;
+      chip.querySelector('button').addEventListener('click', () => { selected.splice(selected.indexOf(name), 1); renderChips(); });
+      box.insertBefore(chip, input);
+    });
+  }
+
+  function add(name) { if (name && !selected.includes(name)) { selected.push(name); renderChips(); } input.value = ''; menu.hidden = true; }
+
+  function showMenu() {
+    const kw = input.value.trim().toLowerCase();
+    const matches = people.filter((p) => !selected.includes(p.name) && (!kw || p.name.toLowerCase().includes(kw) || (p.email || '').includes(kw)));
+    if (matches.length === 0) { menu.innerHTML = '<div class="people__empty">查無人員，請確認人員主檔。</div>'; menu.hidden = false; return; }
+    menu.innerHTML = matches.slice(0, 30).map((p) => `<div class="people__opt" data-name="${esc(p.name)}">${esc(p.name)} <small>${esc(p.email)}</small></div>`).join('');
+    $$('.people__opt', menu).forEach((opt) => opt.addEventListener('mousedown', (e) => { e.preventDefault(); add(opt.dataset.name); }));
+    menu.hidden = false;
+  }
+
+  box.addEventListener('click', () => input.focus());
+  input.addEventListener('focus', showMenu);
+  input.addEventListener('input', showMenu);
+  input.addEventListener('blur', () => setTimeout(() => (menu.hidden = true), 150));
+
+  // 預填（編輯/匯入情境）
+  if (preset) String(preset).split('、').forEach((n) => n.trim() && selected.push(n.trim()));
+  renderChips();
+
+  const picker = { el: root, getNames: () => selected.slice(), key: field.key };
+  PEOPLE_PICKERS.push(picker);
+  root._picker = picker;
+  return root;
+}
+
+// ── 子表項次 ──
+function subTableSectionHtml(subTable) {
+  return `
+    <div class="panel">
+      <div class="panel__head">
+        <div class="section-label" style="margin:0;">${esc(subTable.label)}（可新增多個項次）</div>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnAddItem">＋ 新增項次</button>
+      </div>
+      <div class="items" id="itemsWrap"></div>
+    </div>`;
+}
+
+function addItemCard(subTable) {
+  const wrap = $('#itemsWrap');
+  const seq = wrap.children.length + 1;
+  const card = document.createElement('div');
+  card.className = 'item-card';
+  card.innerHTML = `
+    <div class="item-card__head">
+      <span class="item-card__seq">項次 ${seq}</span>
+      <button type="button" class="btn btn--ghost btn--sm btn-remove">移除</button>
+    </div>
+    <div class="form-grid item-fields"></div>`;
+  wrap.appendChild(card);
+  renderFields($('.item-fields', card), subTable.itemFields, {});
+  card.querySelector('.btn-remove').addEventListener('click', () => { card.remove(); renumberItems(); });
+}
+
+function renumberItems() {
+  $$('#itemsWrap .item-card').forEach((card, i) => { card.querySelector('.item-card__seq').textContent = '項次 ' + (i + 1); });
+}
+
+async function submitCreate(source, schema) {
+  const btn = $('#btnCreate');
+  const payload = collectFields($('#baseFields'));
+  payload.發現來源 = source;
+
+  if (!payload.風險標題) return toast('請填寫風險標題', 'err');
+  if (!payload.處理人 || payload.處理人.length === 0) return toast('請至少指派一位處理人', 'err');
+
+  if (schema.subTable) {
+    payload.items = $$('#itemsWrap .item-card').map((card, i) => {
+      const item = collectFields($('.item-fields', card));
+      item.項次 = i + 1;
+      return item;
+    });
+  }
+
+  setLoading(btn, true);
+  try {
+    await gas('api_createRisk', payload);
+    toast('風險已建立', 'ok');
+    switchView('list');
+  } catch (err) { toast(err.message || err, 'err'); }
+  finally { setLoading(btn, false); }
+}
+
+/** 收集容器內所有輸入值（含人員選擇器），鍵為 data-key。 */
+function collectFields(container) {
+  const data = {};
+  $$('[data-key]', container).forEach((el) => {
+    if (el.classList.contains('people') && el._picker) { data[el._picker.key] = el._picker.getNames(); return; }
+    if (el.dataset.key) data[el.dataset.key] = el.value;
+  });
+  return data;
+}
+
+// ════════════════════════════════════════
+// 通知中心
+// ════════════════════════════════════════
+async function renderNotify() {
+  const view = $('#view');
+  view.innerHTML = '<p class="muted">載入未結案風險…</p>';
+  let risks;
+  try { risks = (await gas('api_listRisks')).filter((r) => r['當前狀態'] !== '已結案 (Closed)'); }
+  catch (err) { return toast(err.message || err, 'err'); }
+
+  if (risks.length === 0) { view.innerHTML = emptyState('沒有未結案風險', '所有風險都已結案，無需通知。'); return; }
+
+  view.innerHTML = `
+    <div class="panel">
+      <div class="panel__head">
+        <label class="switch"><input type="checkbox" id="incItems" checked> 一併通知各項次處理人</label>
+        <button class="btn btn--primary" id="btnNotify">寄送通知</button>
+      </div>
+      <div id="notifyList"></div>
+    </div>`;
+
+  $('#notifyList').innerHTML = risks.map((r) => `
+    <label class="list-row">
+      <input type="checkbox" class="notify-check" value="${esc(r['風險ID'])}">
+      <div class="list-row__main">
+        <div class="list-row__title">${esc(r['風險標題'])} ${statusTag(r['當前狀態'])}</div>
+        <div class="list-row__sub">${esc(r['風險ID'])}·處理人：${esc((r['處理人List'] || []).join('、') || '未指派')}</div>
+      </div>
+    </label>`).join('');
+
+  $('#btnNotify').addEventListener('click', sendNotifications);
+}
+
+async function sendNotifications() {
+  const ids = $$('.notify-check:checked').map((c) => c.value);
+  if (ids.length === 0) return toast('請至少勾選一筆風險', 'err');
+  const btn = $('#btnNotify');
+  setLoading(btn, true);
+  try {
+    const results = await gas('api_notifyRisks', ids, { includeItemHandlers: $('#incItems').checked });
+    const total = results.reduce((sum, r) => sum + r.result.notified.length, 0);
+    const skipped = results.reduce((sum, r) => sum + r.result.skipped.length, 0);
+    toast(`已寄送 ${total} 封通知` + (skipped ? `，${skipped} 位查無 email` : ''), 'ok');
+  } catch (err) { toast(err.message || err, 'err'); }
+  finally { setLoading(btn, false); }
+}
+
+// ════════════════════════════════════════
+// 匯入匯出
+// ════════════════════════════════════════
+function renderIO() {
+  const sources = State.meta.options.SOURCES.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  $('#view').innerHTML = `
+    <div class="panel">
+      <div class="section-label">匯入資料</div>
+      <p class="muted" style="margin-bottom:12px;">選擇發現來源以套用對應的欄位格式。支援 CSV 與 Excel（.xlsx）。</p>
+      <div class="form-grid">
+        <div class="field"><label class="field__label">發現來源</label><select id="ioSource"><option value="">請選擇…</option>${sources}</select></div>
+        <div class="field"><label class="field__label">選擇檔案</label><input type="file" id="ioFile" accept=".csv,.xlsx,.xls"></div>
+        <div class="field field--full" id="ioMetaWrap" hidden>
+          <label class="field__label">此來源以整份檔案為一筆風險，請填寫風險標題</label>
+          <input type="text" id="ioRiskTitle" placeholder="例：上級機關稽核 矯正缺失">
+        </div>
+      </div>
+      <div style="margin-top:12px;"><button class="btn btn--primary" id="btnImport">開始匯入</button></div>
+    </div>
+    <div class="panel">
+      <div class="section-label">匯出資料</div>
+      <p class="muted" style="margin-bottom:12px;">將主表（資安風險追蹤表）全部資料匯出為 CSV。</p>
+      <button class="btn btn--ghost" id="btnExport">匯出主表 CSV</button>
+    </div>`;
+
+  $('#ioSource').addEventListener('change', (e) => {
+    // grouped 來源（有子表）需額外填主表標題
+    const schema = State.meta.schemas[e.target.value];
+    $('#ioMetaWrap').hidden = !(schema && schema.subTable);
+  });
+  $('#btnImport').addEventListener('click', doImport);
+  $('#btnExport').addEventListener('click', doExport);
+}
+
+async function doImport() {
+  const source = $('#ioSource').value;
+  const fileEl = $('#ioFile');
+  if (!source) return toast('請選擇發現來源', 'err');
+  if (!fileEl.files.length) return toast('請選擇檔案', 'err');
+
+  const btn = $('#btnImport');
+  setLoading(btn, true);
+  try {
+    const [file] = await readFiles(fileEl.files);
+    const payload = { source, fileName: file.name, mimeType: file.mimeType, base64: file.base64 };
+    const titleEl = $('#ioRiskTitle');
+    if (titleEl && !$('#ioMetaWrap').hidden) payload.riskMeta = { 風險標題: titleEl.value };
+    const result = await gas('api_importFile', payload);
+    toast(`匯入完成：${result.importedRisks} 筆風險、${result.importedItems} 個項次`, 'ok');
+  } catch (err) { toast(err.message || err, 'err'); }
+  finally { setLoading(btn, false); }
+}
+
+async function doExport() {
+  const btn = $('#btnExport');
+  setLoading(btn, true);
+  try {
+    const csv = await gas('api_exportRisksCsv');
+    downloadCsv('資安風險追蹤表.csv', csv);
+    toast('已匯出 CSV', 'ok');
+  } catch (err) { toast(err.message || err, 'err'); }
+  finally { setLoading(btn, false); }
+}
+
+// ════════════════════════════════════════
+// 設定
+// ════════════════════════════════════════
+async function renderSettings() {
+  const view = $('#view');
+  view.innerHTML = '<p class="muted">載入設定…</p>';
+  let s;
+  try { s = await gas('api_getSettings'); } catch (err) { return toast(err.message || err, 'err'); }
+
+  view.innerHTML = `
+    <div class="panel">
+      <div class="section-label">人員主檔（單一事實來源）</div>
+      <div class="form-grid">
+        <div class="field"><label class="field__label">HR 試算表 ID</label><input id="setHrId" value="${esc(s.hrSpreadsheetId)}" placeholder="貼上人員主檔試算表 ID"></div>
+        <div class="field"><label class="field__label">工作表名稱</label><input id="setHrSheet" value="${esc(s.hrSheetName)}" placeholder="人員主檔"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="section-label">佐證上傳</div>
+      <div class="field"><label class="field__label">Drive 資料夾 ID</label><input id="setFolder" value="${esc(s.evidenceFolderId)}" placeholder="貼上 Drive 資料夾 ID"></div>
+    </div>
+    <div class="panel">
+      <div class="section-label">管理者</div>
+      <div class="field"><label class="field__label">管理者 email（以逗號分隔）</label><textarea id="setAdmins" placeholder="admin1@example.com, admin2@example.com">${esc(s.adminEmails)}</textarea></div>
+    </div>
+    <div style="margin-top:16px;"><button class="btn btn--primary" id="btnSaveSettings">儲存設定</button></div>`;
+
+  $('#btnSaveSettings').addEventListener('click', async () => {
+    const btn = $('#btnSaveSettings');
+    setLoading(btn, true);
+    try {
+      await gas('api_saveSettings', {
+        hrSpreadsheetId: $('#setHrId').value,
+        hrSheetName: $('#setHrSheet').value,
+        evidenceFolderId: $('#setFolder').value,
+        adminEmails: $('#setAdmins').value,
+      });
+      toast('設定已儲存', 'ok');
+    } catch (err) { toast(err.message || err, 'err'); }
+    finally { setLoading(btn, false); }
+  });
+}
+
+// ════════════════════════════════════════
+// 共用工具
+// ════════════════════════════════════════
+function emptyState(title, desc) {
+  return `<div class="empty"><h3>${esc(title)}</h3><p>${esc(desc)}</p></div>`;
+}
+
+function openModal(html) { $('#modalPanel').innerHTML = html; $('#modal').hidden = false; }
+function closeModal() { $('#modal').hidden = true; $('#modalPanel').innerHTML = ''; }
+
+function openConfirm(title, message, onYes) {
+  openModal(`
+    <div class="modal__head"><div class="modal__title">${esc(title)}</div><button class="icon-btn" data-close>×</button></div>
+    <div class="modal__body"><p>${esc(message)}</p></div>
+    <div class="modal__foot"><button class="btn btn--ghost" data-close>取消</button><button class="btn btn--danger" id="confirmYes">確認</button></div>`);
+  $('#confirmYes').addEventListener('click', onYes);
+}
+
+let toastTimer;
+function toast(msg, type) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = 'toast toast--' + (type === 'err' ? 'err' : 'ok');
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (el.hidden = true), 3600);
+}
+
+function setLoading(btn, on) {
+  if (!btn) return;
+  btn.disabled = on;
+  if (on) { btn.dataset.label = btn.innerHTML; btn.innerHTML = '<span class="spinner"></span> 處理中…'; }
+  else if (btn.dataset.label) { btn.innerHTML = btn.dataset.label; }
+}
+
+/** 讀取 <input type=file> 的 FileList 為 base64 物件陣列。 */
+function readFiles(fileList) {
+  return Promise.all(Array.from(fileList).map((file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, mimeType: file.type, base64: reader.result.split(',')[1] });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  })));
+}
+
+/** 以 Blob 觸發瀏覽器下載 CSV（加 BOM 確保 Excel 正確顯示中文）。 */
+function downloadCsv(filename, content) {
+  const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+</script>

@@ -1,0 +1,113 @@
+/**
+ * SheetRepo.gs — 風險資料庫的持久層（Data Access Layer）
+ *
+ * 集中處理「本專案綁定試算表」的工作表存取與「列 ↔ 物件」轉換，
+ * 讓上層 Service（RiskService / CorrectiveService）專注於業務邏輯，
+ * 不必各自重複 getDataRange()/索引欄號等樣板程式。
+ */
+
+const SheetRepo = (function () {
+  /**
+   * 取得（必要時建立）指定名稱的工作表，並確保標題列正確。
+   * @param {string} sheetName
+   * @param {string[]} headers
+   * @returns {GoogleAppsScript.Spreadsheet.Sheet}
+   */
+  function ensureSheet(sheetName, headers) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName(sheetName);
+    if (!sheet) sheet = ss.insertSheet(sheetName);
+
+    const firstRow = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+    const headerMissing = firstRow.join('') === '';
+    if (headerMissing) {
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.setFrozenRows(1);
+    }
+    return sheet;
+  }
+
+  /** 取得主表（資安風險追蹤表）。 */
+  function getMainSheet() {
+    return ensureSheet(CONFIG.MAIN_SHEET, CONFIG.MAIN_HEADERS);
+  }
+
+  /** 取得子表（矯正缺失單）。 */
+  function getSubSheet() {
+    return ensureSheet(CONFIG.SUB_SHEET, CONFIG.SUB_HEADERS);
+  }
+
+  /**
+   * 將工作表全部資料讀為物件陣列（依標題列為鍵）。
+   * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+   * @returns {Array<Object>}
+   */
+  function readAll(sheet) {
+    const values = sheet.getDataRange().getValues();
+    if (values.length < 2) return [];
+    const headers = values[0];
+    return values.slice(1).map((row) => rowToObject_(headers, row));
+  }
+
+  /**
+   * 依某欄值找出符合的「列號」（1-based，含標題列）。
+   * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+   * @param {string} headerName - 比對欄位標題
+   * @param {string} value - 目標值
+   * @returns {number} 找到回傳列號，否則 -1
+   */
+  function findRowNumber(sheet, headerName, value) {
+    const values = sheet.getDataRange().getValues();
+    const colIndex = values[0].indexOf(headerName);
+    if (colIndex === -1) return -1;
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][colIndex]) === String(value)) return i + 1;
+    }
+    return -1;
+  }
+
+  /**
+   * 依標題順序把物件轉成列陣列後 append。
+   * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+   * @param {string[]} headers
+   * @param {Object} obj
+   */
+  function appendObject(sheet, headers, obj) {
+    sheet.appendRow(objectToRow_(headers, obj));
+  }
+
+  /**
+   * 更新指定列（以標題對齊欄位）。
+   * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+   * @param {number} rowNumber - 1-based 列號
+   * @param {string[]} headers
+   * @param {Object} obj
+   */
+  function updateRow(sheet, rowNumber, headers, obj) {
+    sheet.getRange(rowNumber, 1, 1, headers.length).setValues([objectToRow_(headers, obj)]);
+  }
+
+  // ── 內部輔助 ──
+
+  function rowToObject_(headers, row) {
+    const obj = {};
+    headers.forEach((header, i) => {
+      obj[header] = row[i];
+    });
+    return obj;
+  }
+
+  function objectToRow_(headers, obj) {
+    return headers.map((header) => (obj[header] !== undefined ? obj[header] : ''));
+  }
+
+  return {
+    ensureSheet,
+    getMainSheet,
+    getSubSheet,
+    readAll,
+    findRowNumber,
+    appendObject,
+    updateRow,
+  };
+})();

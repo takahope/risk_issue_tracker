@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Noto+Serif+TC:wght@600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <?!= include('styles'); ?>
+</head>
+<body>
+  <!-- 啟動遮罩：緩解初次載入等待焦慮 -->
+  <div id="boot" class="boot">
+    <div class="boot__mark">風險</div>
+    <div class="boot__bar"><span></span></div>
+    <p class="boot__text">正在載入高風險追蹤系統…</p>
+  </div>
+
+  <div class="shell" id="shell" hidden>
+    <!-- 側邊欄：深綠漸層，系統的視覺左錨點 -->
+    <aside class="sidebar">
+      <div class="sidebar__brand">
+        <div class="sidebar__logo">風</div>
+        <div>
+          <div class="sidebar__title">高風險追蹤</div>
+          <div class="sidebar__subtitle">Risk Tracking</div>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav">
+        <button class="nav__item is-active" data-view="list"><span class="nav__dot"></span>風險清單</button>
+        <button class="nav__item" data-view="create" data-admin><span class="nav__dot"></span>新增風險</button>
+        <button class="nav__item" data-view="notify" data-admin><span class="nav__dot"></span>通知中心</button>
+        <button class="nav__item" data-view="io" data-admin><span class="nav__dot"></span>匯入匯出</button>
+        <button class="nav__item" data-view="settings" data-admin><span class="nav__dot"></span>設定</button>
+      </nav>
+
+      <div class="sidebar__user" id="sidebarUser">
+        <div class="sidebar__avatar" id="userAvatar">—</div>
+        <div class="sidebar__userinfo">
+          <div class="sidebar__username" id="userName">載入中</div>
+          <div class="sidebar__role" id="userRole"></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 主內容區 -->
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 class="topbar__title" id="viewTitle">風險清單</h1>
+          <p class="topbar__desc" id="viewDesc">追蹤所有資安風險的處理進度</p>
+        </div>
+        <div class="topbar__actions" id="topActions"></div>
+      </header>
+
+      <section class="view" id="view"></section>
+    </main>
+  </div>
+
+  <!-- 通用浮層（詳情 / 確認） -->
+  <div class="modal" id="modal" hidden>
+    <div class="modal__backdrop" data-close></div>
+    <div class="modal__panel" id="modalPanel"></div>
+  </div>
+
+  <!-- Toast 訊息 -->
+  <div class="toast" id="toast" hidden></div>
+
+  <?!= include('app'); ?>
+</body>
+</html>
