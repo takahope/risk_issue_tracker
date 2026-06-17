@@ -5,3 +5,4 @@ example/高風險追蹤範例/
 
 .claspignore
 .clasp.json
+conductor/
