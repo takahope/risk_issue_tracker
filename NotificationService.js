@@ -38,8 +38,9 @@ const NotificationService = (function () {
     if (!risk) throw new Error('找不到此風險ID：' + riskId);
     if (risk['當前狀態'] === CONFIG.CLOSED_STATUS) throw new Error('此風險已結案，無需通知。');
 
-    const names = collectHandlerNames_(risk, target);
-    return dispatch_(risk, names, service);
+    const contexts = buildRecipientContexts_(risk, target);
+    const appUrl = getAppDeepLink_(riskId);
+    return dispatch_(risk, contexts, service, appUrl);
   }
 
   /**
@@ -58,38 +59,66 @@ const NotificationService = (function () {
   // ── 內部輔助 ──
 
   /**
-   * 依 target 精準收集處理人姓名並去重。
-   * notifyMain 為真 → 納入主表處理人；itemIndices 逐一納入對應項次處理人。
-   * 預設行為（未指定 notifyMain/itemIndices）等同「僅主負責人」，避免誤寄。
+   * 依 target 精準建立「每位收件人的處理脈絡」。
+   *
+   * 回傳以姓名為鍵的物件：{ [name]: { isMain, items } }，讓每位收件人只收到
+   * 與自己相關的內容（主表身分 + 自己被指派的項次），避免群發同一封含雜訊的信。
+   *
+   * notifyMain 為真 → 納入主表處理人並標記 isMain；itemIndices 逐一把對應項次
+   * 掛到該項次每位處理人的 items 陣列。預設行為（未指定）等同「僅主負責人」。
+   *
+   * @returns {Object<string, {isMain: boolean, items: Array<Object>}>}
    */
-  function collectHandlerNames_(risk, target) {
-    const names = [];
-    if (target.notifyMain !== false) splitNames_(risk['處理人']).forEach((n) => names.push(n));
+  function buildRecipientContexts_(risk, target) {
+    const contexts = {};
+    const ensure = (name) => (contexts[name] || (contexts[name] = { isMain: false, items: [] }));
+
+    if (target.notifyMain !== false) {
+      splitNames_(risk['處理人']).forEach((n) => { ensure(n).isMain = true; });
+    }
 
     const items = risk.items || [];
     (target.itemIndices || []).forEach((idx) => {
       const item = items[idx];
-      if (item) splitNames_(item['處理人']).forEach((n) => names.push(n));
+      if (!item) return;
+      splitNames_(item['處理人']).forEach((n) => ensure(n).items.push(item));
     });
-    return [...new Set(names)];
+    return contexts;
   }
 
   /**
-   * 將姓名解析為 email 後逐一寄信；查無 email 者記入 skipped。
+   * 將姓名解析為 email 後，依各自脈絡寄出個人化信件；查無 email 者記入 skipped。
    */
-  function dispatch_(risk, names, service) {
+  function dispatch_(risk, contexts, service, appUrl) {
     const notified = [];
     const skipped = [];
-    names.forEach((name) => {
+    Object.keys(contexts).forEach((name) => {
       const email = HrService.findEmailByName(name);
       if (!email) {
         skipped.push(name);
         return;
       }
-      service.send(email, buildSubject_(risk), buildHtmlBody_(risk, name));
+      service.send(email, buildSubject_(risk), buildHtmlBody_(risk, name, contexts[name], appUrl));
       notified.push(name + ' <' + email + '>');
     });
     return { notified, skipped };
+  }
+
+  /**
+   * 取得「直接開啟此風險」的 Web App 深連結。
+   *
+   * 以 ScriptApp.getService().getUrl()（已宣告 script.scriptapp scope）取得 /exec
+   * 網址，附上 ?riskId= 讓前端載入後自動彈出該風險詳情。在編輯器直接執行或尚未
+   * 部署時 getUrl() 可能回傳空值，此時回傳空字串，由信件文案降級為純文字指引。
+   */
+  function getAppDeepLink_(riskId) {
+    try {
+      const base = ScriptApp.getService().getUrl();
+      if (!base) return '';
+      return base + '?riskId=' + encodeURIComponent(riskId);
+    } catch (e) {
+      return '';
+    }
   }
 
   function buildSubject_(risk) {
@@ -97,30 +126,93 @@ const NotificationService = (function () {
   }
 
   /**
-   * 組信件內容。文案說明「為什麼收到信」與「下一步」，而非僅羅列欄位。
+   * 組信件內容。除了說明「為什麼收到信」，再加上「要處理的風險內容」與
+   * 「處理完該怎麼做」，讓收件人不必登入系統就能掌握全貌與下一步。
+   *
+   * @param {Object} context - 此收件人的脈絡 { isMain, items }
+   * @param {string} appUrl - 直達該風險的深連結（可能為空字串）
    */
-  function buildHtmlBody_(risk, recipientName) {
+  function buildHtmlBody_(risk, recipientName, context, appUrl) {
     const due = risk['預計完成日'] || '（未設定）';
-    return [
-      '<div style="font-family:\'Noto Sans TC\',sans-serif;color:#17211d;line-height:1.7;">',
+    const parts = [
+      '<div style="font-family:\'Noto Sans TC\',sans-serif;color:#17211d;line-height:1.7;max-width:640px;">',
       '<p>' + escapeHtml_(recipientName) + ' 您好，</p>',
-      '<p>您被指派處理下列尚未結案的風險，請於期限前完成並更新處理進度：</p>',
-      '<table style="border-collapse:collapse;margin:12px 0;">',
+      '<p>您被指派處理下列尚未結案的風險，請參閱以下內容，於期限前完成處理並更新狀態：</p>',
+
+      // ── 風險主資訊 ──
+      '<table style="border-collapse:collapse;margin:12px 0;width:100%;">',
       row_('風險ID', risk['風險ID']),
       row_('風險標題', risk['風險標題']),
       row_('風險等級', risk['風險等級']),
       row_('當前狀態', risk['當前狀態']),
+      row_('風險描述', risk['風險描述']),
+      row_('處理方式', risk['處理方式']),
       row_('預計完成日', due),
       '</table>',
-      '<p style="color:#5f6d66;font-size:13px;">此信由「高風險追蹤系統」自動發送，請勿直接回覆。</p>',
+    ];
+
+    // ── 您負責的項次（僅在有指派項次時呈現）──
+    if (context && context.items && context.items.length > 0) {
+      parts.push(buildItemsSection_(context.items));
+    }
+
+    // ── 如何完成處理 ──
+    parts.push(buildHowToSection_(appUrl));
+
+    parts.push('<p style="color:#5f6d66;font-size:13px;margin-top:16px;">此信由「高風險追蹤系統」自動發送，請勿直接回覆。</p>');
+    parts.push('</div>');
+    return parts.join('');
+  }
+
+  /**
+   * 「您負責的項次」區塊：逐項列出矯正缺失單內容（欄位對齊 CONFIG.SUB_HEADERS）。
+   */
+  function buildItemsSection_(items) {
+    const cards = items.map((item) => [
+      '<div style="border:1px solid #e3e9e4;border-radius:8px;padding:10px 14px;margin:8px 0;background:#fbfdfb;">',
+      '<div style="font-weight:700;color:#1f6b4f;margin-bottom:6px;">項次 ' + escapeHtml_(String(item['項次'] || '')) + '</div>',
+      '<table style="border-collapse:collapse;width:100%;">',
+      row_('建議改善事項', item['建議改善事項']),
+      row_('發生原因', item['發生原因']),
+      row_('改善措施', item['改善措施']),
+      row_('預定完成時間', item['預定完成時間']),
+      row_('執行進度', item['執行進度']),
+      '</table>',
       '</div>',
-    ].join('');
+    ].join('')).join('');
+
+    return (
+      '<p style="font-weight:700;color:#17211d;margin:16px 0 4px;">您負責的項次</p>' + cards
+    );
+  }
+
+  /**
+   * 「如何完成處理」區塊：有深連結時提供一鍵直達按鈕，否則退化為純文字指引。
+   */
+  function buildHowToSection_(appUrl) {
+    const steps =
+      '<ol style="margin:6px 0;padding-left:20px;color:#3a463f;">' +
+      '<li>進入此風險的詳情頁面（下方按鈕可直接開啟）。</li>' +
+      '<li>於「更新狀態 / 上傳佐證」區塊上傳處理佐證檔案。</li>' +
+      '<li>將「當前狀態」改為「' + escapeHtml_(CONFIG.CLOSED_STATUS) + '」後按「儲存變更」。</li>' +
+      '</ol>';
+
+    const action = appUrl
+      ? '<p style="margin:12px 0;"><a href="' + escapeHtml_(appUrl) + '" ' +
+        'style="display:inline-block;background:#1f6b4f;color:#ffffff;text-decoration:none;' +
+        'padding:10px 20px;border-radius:8px;font-weight:700;">前往處理此風險</a></p>'
+      : '<p style="margin:12px 0;color:#5f6d66;">請開啟「高風險追蹤系統」，' +
+        '於風險清單以上方「風險ID」搜尋並點開該風險後依上述步驟處理。</p>';
+
+    return (
+      '<p style="font-weight:700;color:#17211d;margin:16px 0 4px;">如何完成處理</p>' + steps + action
+    );
   }
 
   function row_(label, value) {
     return (
       '<tr>' +
-      '<td style="padding:4px 12px;background:#f6f8f5;color:#5f6d66;">' + escapeHtml_(label) + '</td>' +
+      '<td style="padding:4px 12px;background:#f6f8f5;color:#5f6d66;white-space:nowrap;vertical-align:top;">' + escapeHtml_(label) + '</td>' +
       '<td style="padding:4px 12px;">' + escapeHtml_(String(value || '')) + '</td>' +
       '</tr>'
     );

@@ -9,7 +9,7 @@
  * 開啟 Web App 後，DevTools Console 應印出此行；boot 畫面也會顯示。
  * 若看不到此行 → 你開的是舊部署版本（請建立新版本部署）。
  */
-const APP_BUILD = '2026-06-17-f (notify targeting)';
+const APP_BUILD = '2026-06-17-g (notify content + deeplink)';
 console.log('[高風險追蹤] 前端版本 ' + APP_BUILD);
 
 /**
@@ -82,9 +82,21 @@ async function init() {
     $('#boot').hidden = true;
     $('#shell').hidden = false;
     switchView('list');
+    if (window.DEEPLINK_RISK_ID) openDeeplinkRisk(window.DEEPLINK_RISK_ID);
   } catch (err) {
     renderBootError(err);
   }
+}
+
+/**
+ * 從通知信深連結（?riskId=）載入後自動開啟該風險詳情。
+ * 與 renderList 的非同步時序解耦：自行確保 State.risks 已載入再開視窗，避免 race。
+ */
+async function openDeeplinkRisk(id) {
+  if (!State.risks.length) {
+    try { State.risks = await gas('api_listRisks'); } catch (e) { return; }
+  }
+  openRiskDetail(id);
 }
 
 /**

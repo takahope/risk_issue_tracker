@@ -7,9 +7,14 @@
 
 /**
  * Web App 進入點，回傳單頁應用。
+ *
+ * 支援 ?riskId= 深連結（通知信中的按鈕會帶入）：把 riskId 注入模板，
+ * 讓前端載入後自動開啟該風險的詳情視窗，方便收件人直接處理。
  */
-function doGet() {
-  return HtmlService.createTemplateFromFile('index')
+function doGet(e) {
+  const template = HtmlService.createTemplateFromFile('index');
+  template.riskId = (e && e.parameter && e.parameter.riskId) || '';
+  return template
     .evaluate()
     .setTitle('高風險追蹤系統')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')

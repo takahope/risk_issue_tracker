@@ -67,6 +67,8 @@
   <!-- Toast 訊息 -->
   <div class="toast" id="toast" hidden></div>
 
+  <!-- 通知信深連結：?riskId= 經 doGet 注入，供前端載入後自動開啟該風險 -->
+  <script>window.DEEPLINK_RISK_ID = "<?= riskId ?>";</script>
   <?!= include('app'); ?>
 </body>
 </html>
