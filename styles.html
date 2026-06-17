@@ -32,6 +32,12 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* 讓 HTML 的 hidden 屬性永遠生效：class 選擇器（如 .boot/.shell/.modal 的
+   display:flex/grid）優先級高於瀏覽器預設的 [hidden]{display:none}，會導致
+   設了 element.hidden=true 仍不隱藏。加上 !important 確保 hidden 一律勝出，
+   否則 boot 啟動遮罩永遠蓋在已載入的畫面上方。 */
+[hidden] { display: none !important; }
+
 body {
   font-family: var(--font-body);
   color: var(--ink);

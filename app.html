@@ -5,6 +5,14 @@
    ============================================================ */
 
 /**
+ * 版本標記：每次重新部署用來確認「跑的是不是新版」。
+ * 開啟 Web App 後，DevTools Console 應印出此行；boot 畫面也會顯示。
+ * 若看不到此行 → 你開的是舊部署版本（請建立新版本部署）。
+ */
+const APP_BUILD = '2026-06-17-d (hidden-attr CSS fix)';
+console.log('[高風險追蹤] 前端版本 ' + APP_BUILD);
+
+/**
  * 將 google.script.run 包成 Promise，讓非同步流程以 async/await 撰寫。
  * 加上 20 秒逾時：若 google.script.run 兩個 handler 都不觸發（常見於多個
  * Google 帳號同時登入、或部署版本過舊導致通道無法建立），把「永久轉圈」
@@ -38,6 +46,10 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // ── 啟動 ──
+// 在 boot 畫面標示前端版本：若此文字有出現，代表新版腳本確實已載入執行；
+// 若沒出現（仍是舊文字），代表你開的是舊部署版本。
+markBuildOnBoot();
+
 // 不可只依賴 DOMContentLoaded：在 GAS 沙盒 iframe 中，此事件有時在腳本註冊
 // 監聽器之前就已觸發，導致 init() 永遠不執行、畫面卡在載入中。
 // 因此先檢查 document.readyState，已就緒則直接啟動，否則才掛監聽器。
@@ -45,6 +57,20 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);
 } else {
   init();
+}
+
+/** 把前端版本寫到 boot 畫面，當作「新版是否載入」的肉眼判讀依據。 */
+function markBuildOnBoot() {
+  const el = document.getElementById('bootBuild') || (function () {
+    const boot = document.getElementById('boot');
+    if (!boot) return null;
+    const tag = document.createElement('p');
+    tag.id = 'bootBuild';
+    tag.style.cssText = 'font-size:11px;color:rgba(234,250,244,.55);margin-top:8px;';
+    boot.appendChild(tag);
+    return tag;
+  })();
+  if (el) el.textContent = 'build ' + APP_BUILD;
 }
 
 async function init() {
