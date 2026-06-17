@@ -267,11 +267,16 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 }
 .tooltip-trigger:hover .tooltip-content, .tooltip-trigger:focus-within .tooltip-content { opacity: 1; visibility: visible; transform: none; }
 .mail-preview__subject { font-weight: 700; font-size: 13px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--field); border-radius: 6px 6px 0 0; }
-.mail-preview__body { padding: 12px 14px; font-size: 12px; color: var(--ink); line-height: 1.6; }
+.mail-preview__body { padding: 12px 14px; font-size: 12px; color: var(--ink); line-height: 1.6; max-height: 60vh; overflow-y: auto; }
 .mail-preview__body p { margin: 0 0 6px; }
 .mail-preview__body table { border-collapse: collapse; margin: 6px 0; width: 100%; }
-.mail-preview__body td { padding: 3px 8px; border: 1px solid var(--line); }
+.mail-preview__body td { padding: 3px 8px; border: 1px solid var(--line); vertical-align: top; }
 .mail-preview__body td:first-child { background: var(--field); color: var(--muted); white-space: nowrap; }
+.mail-preview__label { font-weight: 700; color: var(--ink); margin: 10px 0 4px; }
+.mail-preview__item { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 4px 0; background: var(--field); }
+.mail-preview__item-title { font-weight: 700; color: var(--accent-dark); margin-bottom: 4px; }
+.mail-preview__steps { margin: 4px 0; padding-left: 18px; color: var(--ink); }
+.mail-preview__btn { display: inline-block; margin: 8px 0 2px; background: var(--accent-dark); color: #fff; padding: 6px 14px; border-radius: 6px; font-weight: 700; }
 .mail-preview__foot { color: var(--muted); font-size: 11px; margin-top: 6px; }
 
 /* ── 空狀態（簡潔文字 + 操作入口）── */

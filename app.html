@@ -9,7 +9,7 @@
  * 開啟 Web App 後，DevTools Console 應印出此行；boot 畫面也會顯示。
  * 若看不到此行 → 你開的是舊部署版本（請建立新版本部署）。
  */
-const APP_BUILD = '2026-06-17-g (notify content + deeplink)';
+const APP_BUILD = '2026-06-17-h (notify content + deeplink + preview)';
 console.log('[高風險追蹤] 前端版本 ' + APP_BUILD);
 
 /**
@@ -659,21 +659,44 @@ function buildNotifyTargets_(mode) {
   return targets;
 }
 
-/** 信件預覽（擬真排版，對應後端 buildHtmlBody_ 的欄位）。 */
+/** 信件預覽（擬真排版，對應後端 buildHtmlBody_ 的區塊與欄位）。 */
 function emailPreviewHtml() {
   return `
     <div class="mail-preview">
       <div class="mail-preview__subject">【高風險追蹤】待處理風險通知：〈風險標題〉</div>
       <div class="mail-preview__body">
         <p>〈處理人姓名〉 您好，</p>
-        <p>您被指派處理下列尚未結案的風險，請於期限前完成並更新處理進度：</p>
+        <p>您被指派處理下列尚未結案的風險，請參閱以下內容，於期限前完成處理並更新狀態：</p>
         <table>
           <tr><td>風險ID</td><td>RISK-…</td></tr>
           <tr><td>風險標題</td><td>〈標題〉</td></tr>
           <tr><td>風險等級</td><td>〈等級〉</td></tr>
           <tr><td>當前狀態</td><td>〈狀態〉</td></tr>
+          <tr><td>風險描述</td><td>〈描述〉</td></tr>
+          <tr><td>處理方式</td><td>〈處理方式〉</td></tr>
           <tr><td>預計完成日</td><td>〈日期〉</td></tr>
         </table>
+
+        <p class="mail-preview__label">您負責的項次</p>
+        <div class="mail-preview__item">
+          <div class="mail-preview__item-title">項次 1</div>
+          <table>
+            <tr><td>建議改善事項</td><td>〈事項〉</td></tr>
+            <tr><td>發生原因</td><td>〈原因〉</td></tr>
+            <tr><td>改善措施</td><td>〈措施〉</td></tr>
+            <tr><td>預定完成時間</td><td>〈時間〉</td></tr>
+            <tr><td>執行進度</td><td>〈進度〉</td></tr>
+          </table>
+        </div>
+
+        <p class="mail-preview__label">如何完成處理</p>
+        <ol class="mail-preview__steps">
+          <li>進入此風險的詳情頁面（下方按鈕可直接開啟）。</li>
+          <li>於「更新狀態 / 上傳佐證」區塊上傳處理佐證檔案。</li>
+          <li>將「當前狀態」改為「已結案 (Closed)」後按「儲存變更」。</li>
+        </ol>
+        <span class="mail-preview__btn">前往處理此風險</span>
+
         <p class="mail-preview__foot">此信由「高風險追蹤系統」自動發送，請勿直接回覆。</p>
       </div>
     </div>`;
