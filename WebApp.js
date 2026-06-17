@@ -142,10 +142,13 @@ function api_uploadEvidence(riskId, files) {
   return FileService.uploadEvidences(riskId, files);
 }
 
-/** 通知處理人（僅管理者）。 */
-function api_notifyRisks(riskIds, options) {
+/**
+ * 通知處理人（僅管理者）。
+ * @param {Array<Object>} targets - 收件人描述陣列，每筆 { riskId, notifyMain, itemIndices }
+ */
+function api_notifyRisks(targets) {
   AuthService.requireAdmin('寄送通知');
-  return NotificationService.notifyRisks(riskIds, options);
+  return NotificationService.notifyRisks(targets);
 }
 
 /** 匯入檔案（僅管理者）。 */

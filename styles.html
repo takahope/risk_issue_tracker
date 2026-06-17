@@ -219,6 +219,61 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .switch { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 14px; }
 .switch input { width: auto; }
 
+/* ── 通知中心：收件人模式 / 子項次 / 信件預覽 ── */
+.notify-modes { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.radio-group { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; }
+.radio-group label {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 14px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel); transition: border-color .15s ease, background .15s ease, color .15s ease;
+}
+.radio-group label:hover { border-color: #a9d8cd; }
+.radio-group input { width: auto; accent-color: var(--accent); }
+/* 選中回饋：用 accent 細框 + 淺底，不用實色填滿 */
+.radio-group label:has(input:checked) { border-color: var(--accent); background: rgba(15,123,104,.08); color: var(--accent-dark); font-weight: 700; }
+
+/* 風險列：主列 + 可展開子項次 */
+.risk-row { border: 1px solid var(--line); border-radius: 4px; background: var(--panel); }
+.risk-row + .risk-row { margin-top: var(--space-2); }
+.list-row__head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); cursor: pointer; }
+.list-row__head input[type=checkbox] { width: auto; }
+
+.sub-items {
+  margin: 0 var(--space-3) var(--space-3) calc(var(--space-3) + 28px);
+  padding: var(--space-2) var(--space-3);
+  background: var(--field); border: 1px solid var(--line); border-radius: 4px;
+  display: flex; flex-direction: column; gap: var(--space-1);
+  animation: stage-in .2s ease;
+}
+.sub-item-row { display: flex; align-items: center; gap: var(--space-2); font-size: 13px; cursor: pointer; }
+.sub-item-row input { width: auto; accent-color: var(--accent); }
+.sub-item-row input:disabled { cursor: not-allowed; }
+
+/* 純 CSS Tooltip 信件預覽（hover / focus 顯示；浮層才用陰影）*/
+.tooltip-trigger {
+  position: relative; display: inline-grid; place-items: center;
+  width: 20px; height: 20px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted);
+  font-size: 12px; font-weight: 700; cursor: help; user-select: none;
+}
+.tooltip-trigger:hover, .tooltip-trigger:focus-visible { border-color: var(--accent); color: var(--accent-dark); outline: none; }
+.tooltip-content {
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 50;
+  width: 320px; padding: 0; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); box-shadow: 0 16px 48px rgba(23,33,29,.22);
+  opacity: 0; visibility: hidden; transform: translateY(-4px);
+  transition: opacity .15s ease, transform .15s ease, visibility .15s;
+  font-weight: 400; cursor: default; text-align: left;
+}
+.tooltip-trigger:hover .tooltip-content, .tooltip-trigger:focus-within .tooltip-content { opacity: 1; visibility: visible; transform: none; }
+.mail-preview__subject { font-weight: 700; font-size: 13px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--field); border-radius: 6px 6px 0 0; }
+.mail-preview__body { padding: 12px 14px; font-size: 12px; color: var(--ink); line-height: 1.6; }
+.mail-preview__body p { margin: 0 0 6px; }
+.mail-preview__body table { border-collapse: collapse; margin: 6px 0; width: 100%; }
+.mail-preview__body td { padding: 3px 8px; border: 1px solid var(--line); }
+.mail-preview__body td:first-child { background: var(--field); color: var(--muted); white-space: nowrap; }
+.mail-preview__foot { color: var(--muted); font-size: 11px; margin-top: 6px; }
+
 /* ── 空狀態（簡潔文字 + 操作入口）── */
 .empty { text-align: center; padding: var(--space-6) var(--space-4); color: var(--muted); }
 .empty h3 { font-family: var(--font-display); color: var(--ink); margin-bottom: var(--space-2); }

@@ -9,7 +9,7 @@
  * 開啟 Web App 後，DevTools Console 應印出此行；boot 畫面也會顯示。
  * 若看不到此行 → 你開的是舊部署版本（請建立新版本部署）。
  */
-const APP_BUILD = '2026-06-17-e (full-width sidebar layout)';
+const APP_BUILD = '2026-06-17-f (notify targeting)';
 console.log('[高風險追蹤] 前端版本 ' + APP_BUILD);
 
 /**
@@ -537,36 +537,134 @@ async function renderNotify() {
   view.innerHTML = `
     <div class="panel">
       <div class="panel__head">
-        <label class="switch"><input type="checkbox" id="incItems" checked> 一併通知各項次處理人</label>
+        <div class="notify-modes">
+          <span class="section-label" style="margin:0;">收件人</span>
+          <div class="radio-group" id="notifyMode">
+            <label><input type="radio" name="notifyMode" value="all" checked> 全部通知</label>
+            <label><input type="radio" name="notifyMode" value="mainOnly"> 僅主負責人</label>
+            <label><input type="radio" name="notifyMode" value="custom"> 自訂特定項次</label>
+          </div>
+          <span class="tooltip-trigger" tabindex="0" aria-label="信件預覽">?
+            <span class="tooltip-content">${emailPreviewHtml()}</span>
+          </span>
+        </div>
         <button class="btn btn--primary" id="btnNotify">寄送通知</button>
       </div>
       <div id="notifyList"></div>
     </div>`;
 
-  $('#notifyList').innerHTML = risks.map((r) => `
-    <label class="list-row">
-      <input type="checkbox" class="notify-check" value="${esc(r['風險ID'])}">
-      <div class="list-row__main">
-        <div class="list-row__title">${esc(r['風險標題'])} ${statusTag(r['當前狀態'])}</div>
-        <div class="list-row__sub">${esc(r['風險ID'])}·處理人：${esc((r['處理人List'] || []).join('、') || '未指派')}</div>
-      </div>
-    </label>`).join('');
+  $('#notifyList').innerHTML = risks.map(notifyRowHtml).join('');
 
+  $('#notifyMode').addEventListener('change', applyNotifyMode);
   $('#btnNotify').addEventListener('click', sendNotifications);
+  applyNotifyMode();
+}
+
+/** 單筆風險的通知列（含主勾選與子項次清單）。 */
+function notifyRowHtml(r) {
+  const items = r.items || [];
+  const subRows = items.map((it, i) => {
+    const handlers = esc(it['處理人'] || '未指派');
+    return `<label class="sub-item-row">
+      <input type="checkbox" class="notify-check-item" data-index="${i}">
+      <span>項次 ${esc(it['項次'])} － ${handlers}</span>
+    </label>`;
+  }).join('');
+
+  return `
+    <div class="risk-row" data-risk-id="${esc(r['風險ID'])}">
+      <label class="list-row__head">
+        <input type="checkbox" class="notify-check-main">
+        <div class="list-row__main">
+          <div class="list-row__title">${esc(r['風險標題'])} ${statusTag(r['當前狀態'])}</div>
+          <div class="list-row__sub">${esc(r['風險ID'])}·主處理人：${esc((r['處理人List'] || []).join('、') || '未指派')}</div>
+        </div>
+      </label>
+      ${subRows ? `<div class="sub-items" hidden>${subRows}</div>` : ''}
+    </div>`;
+}
+
+/**
+ * 依 radio 模式調整子項次的顯示與可勾選狀態：
+ *   custom → 展開所有子項次，主處理人與各項次可獨立勾選
+ *            （故可達成「只通知某項次、不通知主負責人」notifyMain:false）
+ *   all / mainOnly → 隱藏並鎖定（disable）子項次，避免誤判
+ */
+function applyNotifyMode() {
+  const isCustom = notifyModeValue_() === 'custom';
+  $$('#notifyList .risk-row').forEach((row) => {
+    const sub = $('.sub-items', row);
+    if (!sub) return;
+    sub.hidden = !isCustom;
+    $$('.notify-check-item', sub).forEach((cb) => { cb.disabled = !isCustom; });
+  });
+}
+
+function notifyModeValue_() {
+  const checked = $('input[name="notifyMode"]:checked');
+  return checked ? checked.value : 'all';
 }
 
 async function sendNotifications() {
-  const ids = $$('.notify-check:checked').map((c) => c.value);
-  if (ids.length === 0) return toast('請至少勾選一筆風險', 'err');
+  const mode = notifyModeValue_();
+  const targets = buildNotifyTargets_(mode);
+  if (targets.length === 0) return toast('請至少勾選一筆風險', 'err');
+
   const btn = $('#btnNotify');
   setLoading(btn, true);
   try {
-    const results = await gas('api_notifyRisks', ids, { includeItemHandlers: $('#incItems').checked });
+    const results = await gas('api_notifyRisks', targets);
     const total = results.reduce((sum, r) => sum + r.result.notified.length, 0);
     const skipped = results.reduce((sum, r) => sum + r.result.skipped.length, 0);
     toast(`已寄送 ${total} 封通知` + (skipped ? `，${skipped} 位查無 email` : ''), 'ok');
   } catch (err) { toast(err.message || err, 'err'); }
   finally { setLoading(btn, false); }
+}
+
+/** 掃描 DOM，依模式建構後端所需的 targets 陣列。 */
+function buildNotifyTargets_(mode) {
+  const targets = [];
+  $$('#notifyList .risk-row').forEach((row) => {
+    const riskId = row.dataset.riskId;
+    const mainChecked = $('.notify-check-main', row).checked;
+    const itemBoxes = $$('.notify-check-item', row);
+    const allIndices = itemBoxes.map((cb) => Number(cb.dataset.index));
+
+    if (mode === 'all') {
+      if (mainChecked) targets.push({ riskId, notifyMain: true, itemIndices: allIndices });
+      return;
+    }
+    if (mode === 'mainOnly') {
+      if (mainChecked) targets.push({ riskId, notifyMain: true, itemIndices: [] });
+      return;
+    }
+    // custom：主勾選或有任何子項次勾選即納入
+    const checkedItems = itemBoxes.filter((cb) => cb.checked).map((cb) => Number(cb.dataset.index));
+    if (mainChecked || checkedItems.length > 0) {
+      targets.push({ riskId, notifyMain: mainChecked, itemIndices: checkedItems });
+    }
+  });
+  return targets;
+}
+
+/** 信件預覽（擬真排版，對應後端 buildHtmlBody_ 的欄位）。 */
+function emailPreviewHtml() {
+  return `
+    <div class="mail-preview">
+      <div class="mail-preview__subject">【高風險追蹤】待處理風險通知：〈風險標題〉</div>
+      <div class="mail-preview__body">
+        <p>〈處理人姓名〉 您好，</p>
+        <p>您被指派處理下列尚未結案的風險，請於期限前完成並更新處理進度：</p>
+        <table>
+          <tr><td>風險ID</td><td>RISK-…</td></tr>
+          <tr><td>風險標題</td><td>〈標題〉</td></tr>
+          <tr><td>風險等級</td><td>〈等級〉</td></tr>
+          <tr><td>當前狀態</td><td>〈狀態〉</td></tr>
+          <tr><td>預計完成日</td><td>〈日期〉</td></tr>
+        </table>
+        <p class="mail-preview__foot">此信由「高風險追蹤系統」自動發送，請勿直接回覆。</p>
+      </div>
+    </div>`;
 }
 
 // ════════════════════════════════════════

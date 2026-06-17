@@ -17,48 +17,60 @@ const GmailNotificationService = {
 
 const NotificationService = (function () {
   /**
-   * 通知某風險的處理人（主表處理人，可選擇是否含各項次處理人）。
+   * 通知某風險的指定收件人。
    *
-   * @param {string} riskId
-   * @param {Object} [options]
-   * @param {boolean} [options.includeItemHandlers=true] - 是否一併通知項次處理人
+   * 收件人由 target 精準描述：可選擇是否通知主表處理人，並指定要通知哪些
+   * 子項次（項次）的處理人，達成「全部 / 僅主負責人 / 自訂特定項次」的彈性。
+   *
+   * @param {Object} target - 收件人描述
+   * @param {string} target.riskId - 風險ID
+   * @param {boolean} [target.notifyMain=true] - 是否通知主表處理人
+   * @param {number[]} [target.itemIndices=[]] - 要通知的子項次索引（risk.items 的 0-based）
    * @param {Object} [emailService=GmailNotificationService] - 寄信服務（依賴注入）
    * @returns {{notified: string[], skipped: string[]}}
    */
-  function notifyRisk(riskId, options, emailService) {
+  function notifyRisk(target, emailService) {
     const service = emailService || GmailNotificationService;
-    const opts = options || {};
-    const includeItems = opts.includeItemHandlers !== false;
+    const riskId = target && target.riskId;
+    if (!riskId) throw new Error('通知對象缺少風險ID。');
 
     const risk = RiskService.getRisk(riskId);
     if (!risk) throw new Error('找不到此風險ID：' + riskId);
     if (risk['當前狀態'] === CONFIG.CLOSED_STATUS) throw new Error('此風險已結案，無需通知。');
 
-    const names = collectHandlerNames_(risk, includeItems);
+    const names = collectHandlerNames_(risk, target);
     return dispatch_(risk, names, service);
   }
 
   /**
-   * 批次通知多筆未結案風險。
-   * @param {string[]} riskIds
-   * @param {Object} [options]
+   * 批次通知多筆風險的指定收件人。
+   * @param {Array<Object>} targets - 收件人描述陣列（格式見 notifyRisk）
    * @param {Object} [emailService]
-   * @returns {Array<Object>}
+   * @returns {Array<Object>} 每筆 { riskId, result }
    */
-  function notifyRisks(riskIds, options, emailService) {
-    return riskIds.map((id) => ({ riskId: id, result: notifyRisk(id, options, emailService) }));
+  function notifyRisks(targets, emailService) {
+    return (targets || []).map((target) => ({
+      riskId: target.riskId,
+      result: notifyRisk(target, emailService),
+    }));
   }
 
   // ── 內部輔助 ──
 
   /**
-   * 收集處理人姓名（去重）。主表處理人必含，項次處理人視選項決定。
+   * 依 target 精準收集處理人姓名並去重。
+   * notifyMain 為真 → 納入主表處理人；itemIndices 逐一納入對應項次處理人。
+   * 預設行為（未指定 notifyMain/itemIndices）等同「僅主負責人」，避免誤寄。
    */
-  function collectHandlerNames_(risk, includeItems) {
-    const names = splitNames_(risk['處理人']);
-    if (includeItems) {
-      (risk.items || []).forEach((item) => splitNames_(item['處理人']).forEach((n) => names.push(n)));
-    }
+  function collectHandlerNames_(risk, target) {
+    const names = [];
+    if (target.notifyMain !== false) splitNames_(risk['處理人']).forEach((n) => names.push(n));
+
+    const items = risk.items || [];
+    (target.itemIndices || []).forEach((idx) => {
+      const item = items[idx];
+      if (item) splitNames_(item['處理人']).forEach((n) => names.push(n));
+    });
     return [...new Set(names)];
   }
 
