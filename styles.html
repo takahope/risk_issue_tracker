@@ -72,12 +72,14 @@ body {
 @keyframes boot-progress { 0% { transform: translateX(-120%); } 100% { transform: translateX(360%); } }
 
 /* ── 主框架 ── */
+/* 滿版佈局：側邊欄須貼齊瀏覽器左緣。先前用 max-width + margin:auto 置中整個
+   shell，在寬於 1440px 的螢幕會在兩側留白，使側邊欄浮在白底中央而顯得突兀。
+   改為滿版 grid，側邊欄固定 280px 貼左，主內容填滿其餘空間。 */
 .shell {
   display: grid;
   grid-template-columns: 280px 1fr;
   min-height: 100vh;
-  max-width: 1440px;
-  margin: 0 auto;
+  width: 100%;
 }
 
 /* ── 側邊欄（簽名元素：深綠漸層 + active 指示線）── */
