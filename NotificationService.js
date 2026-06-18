@@ -8,10 +8,17 @@
 
 /**
  * 預設寄信服務：封裝 GmailApp，作為依賴注入的具體實作。
+ *
+ * recipients 可為單一字串或字串陣列。多位收件人時全部放入「To」合併成一封寄出，
+ * 讓同組（例如同一項次的多位處理人）能在收件欄互相看到，知道可找誰一起討論；
+ * 同時只呼叫一次 GmailApp.sendEmail（節省執行時間，降低撞 6 分鐘上限的風險）。
+ * 注意：每日寄信配額以「收件人數」計，合併寄送不影響配額。
  */
 const GmailNotificationService = {
-  send: function (recipient, subject, htmlBody) {
-    GmailApp.sendEmail(recipient, subject, '', { htmlBody: htmlBody, name: '高風險追蹤系統' });
+  send: function (recipients, subject, htmlBody) {
+    const list = (Array.isArray(recipients) ? recipients : [recipients]).filter(function (e) { return e; });
+    if (list.length === 0) return;
+    GmailApp.sendEmail(list.join(','), subject, '', { htmlBody: htmlBody, name: '高風險追蹤系統' });
   },
 };
 
@@ -87,21 +94,49 @@ const NotificationService = (function () {
   }
 
   /**
-   * 將姓名解析為 email 後，依各自脈絡寄出個人化信件；查無 email 者記入 skipped。
+   * 將姓名解析為 email 後寄信；查無 email 者記入 skipped。
+   *
+   * 採「內容簽章分組」：信件內容完全相同的收件人（例如同一項次的多位處理人、
+   * 或多位主處理人）合併為一封 BCC 寄出，減少寄信呼叫次數，又不犧牲個人化
+   * （不同內容者仍各自分組）。單一收件人時等同一般個別寄送。
    */
   function dispatch_(risk, contexts, service, appUrl) {
     const notified = [];
     const skipped = [];
+
+    // signature -> { context, recipients: [{name, email}] }
+    const groups = {};
     Object.keys(contexts).forEach((name) => {
       const email = HrService.findEmailByName(name);
       if (!email) {
         skipped.push(name);
         return;
       }
-      service.send(email, buildSubject_(risk), buildHtmlBody_(risk, name, contexts[name], appUrl));
-      notified.push(name + ' <' + email + '>');
+      const context = contexts[name];
+      const sig = contentSignature_(context);
+      (groups[sig] || (groups[sig] = { context: context, recipients: [] }))
+        .recipients.push({ name: name, email: email });
     });
+
+    Object.keys(groups).forEach((sig) => {
+      const group = groups[sig];
+      const names = group.recipients.map((r) => r.name);
+      const emails = group.recipients.map((r) => r.email);
+      const body = buildHtmlBody_(risk, names.join(CONFIG.PEOPLE_DELIMITER), group.context, appUrl);
+      service.send(emails, buildSubject_(risk), body);
+      group.recipients.forEach((r) => notified.push(r.name + ' <' + r.email + '>'));
+    });
+
     return { notified, skipped };
+  }
+
+  /**
+   * 內容簽章：信件內容由「是否主處理人 + 負責的項次集合」決定，故以此為鍵。
+   * 同一風險內項次序號唯一，故項次序號集合即可代表項次內容，無需比對整列。
+   */
+  function contentSignature_(context) {
+    const itemSeqs = (context.items || []).map((it) => String(it['項次'])).sort();
+    return JSON.stringify({ isMain: !!context.isMain, items: itemSeqs });
   }
 
   /**
