@@ -57,6 +57,37 @@ const CorrectiveService = (function () {
   }
 
   /**
+   * 就地更新某風險的單一項次（不重建整批，保留其他項次的狀態與佐證）。
+   *
+   * 供「逐項次回報」使用：可更新狀態、並把新佐證連結附加到該項次的
+   * 「佐證連結」欄（以換行串接多筆）。找不到該項次時拋錯。
+   *
+   * @param {string} riskId
+   * @param {number|string} seq - 項次序號
+   * @param {Object} updates - { 狀態?, evidenceLinks?: string[] }
+   * @returns {Object} 更新後的項次
+   */
+  function updateItem(riskId, seq, updates) {
+    const sheet = SheetRepo.getSubSheet();
+    const rowNumber = findItemRowNumber_(sheet, riskId, seq);
+    if (rowNumber === -1) throw new Error('找不到風險 ' + riskId + ' 的項次 ' + seq + '。');
+
+    const current = SheetRepo.readAll(sheet)[rowNumber - 2];
+    const merged = { ...current };
+
+    if (updates && updates.狀態) merged['狀態'] = updates.狀態;
+
+    if (updates && Array.isArray(updates.evidenceLinks) && updates.evidenceLinks.length) {
+      const existing = current['佐證連結'] || '';
+      merged['佐證連結'] = [existing, ...updates.evidenceLinks].filter((s) => s).join('\n');
+    }
+
+    SheetRepo.updateRow(sheet, rowNumber, CONFIG.SUB_HEADERS, merged);
+    SpreadsheetApp.flush();
+    return merged;
+  }
+
+  /**
    * 刪除某風險的所有項次。由後往前刪避免列號位移。
    * @param {string} riskId
    */
@@ -77,6 +108,22 @@ const CorrectiveService = (function () {
   }
 
   /**
+   * 以「風險ID + 項次」雙鍵定位列號（1-based，含標題列）。找不到回傳 -1。
+   */
+  function findItemRowNumber_(sheet, riskId, seq) {
+    const values = sheet.getDataRange().getValues();
+    const idCol = values[0].indexOf('風險ID');
+    const seqCol = values[0].indexOf('項次');
+    if (idCol === -1 || seqCol === -1) return -1;
+    for (let i = 1; i < values.length; i++) {
+      if (String(values[i][idCol]) === String(riskId) && String(values[i][seqCol]) === String(seq)) {
+        return i + 1;
+      }
+    }
+    return -1;
+  }
+
+  /**
    * 將前端項次物件轉為子表列物件（鍵對齊 CONFIG.SUB_HEADERS）。
    * 前端 itemFields 使用語意化 key（suggestion/cause...），此處對應成中文欄名。
    */
@@ -90,8 +137,11 @@ const CorrectiveService = (function () {
       '預定完成時間': item.dueDate || item['預定完成時間'] || '',
       '執行進度': item.progress || item['執行進度'] || '',
       '處理人': RiskService.serializePeople_(item.handlers || item['處理人']),
+      // 整批取代時保留既有狀態/佐證（若前端有帶回），否則新項次預設「處理中」
+      '狀態': item.狀態 || item.status || CONFIG.ITEM_DEFAULT_STATUS,
+      '佐證連結': item['佐證連結'] || item.evidence || '',
     };
   }
 
-  return { listItems, groupByRiskId, replaceItems, deleteByRiskId };
+  return { listItems, groupByRiskId, replaceItems, updateItem, deleteByRiskId };
 })();

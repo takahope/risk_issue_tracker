@@ -18,11 +18,18 @@ const SheetRepo = (function () {
     let sheet = ss.getSheetByName(sheetName);
     if (!sheet) sheet = ss.insertSheet(sheetName);
 
-    const firstRow = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-    const headerMissing = firstRow.join('') === '';
-    if (headerMissing) {
+    const lastCol = sheet.getLastColumn();
+    const current = lastCol ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+    const isEmpty = current.join('') === '';
+
+    if (isEmpty) {
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
       sheet.setFrozenRows(1);
+    } else if (current.length < headers.length && current.every((h, i) => h === headers[i])) {
+      // 既有表頭是新表頭的前綴 → 安全地把新增欄位補在尾端（不動既有資料列）。
+      // 讓 SUB_HEADERS 之類的欄位演進可自動遷移，免去手動改表頭。
+      sheet.getRange(1, current.length + 1, 1, headers.length - current.length)
+        .setValues([headers.slice(current.length)]);
     }
     return sheet;
   }

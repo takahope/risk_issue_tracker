@@ -9,7 +9,7 @@
  * 開啟 Web App 後，DevTools Console 應印出此行；boot 畫面也會顯示。
  * 若看不到此行 → 你開的是舊部署版本（請建立新版本部署）。
  */
-const APP_BUILD = '2026-06-17-h (notify content + deeplink + preview)';
+const APP_BUILD = '2026-06-18-i (per-item status + evidence)';
 console.log('[高風險追蹤] 前端版本 ' + APP_BUILD);
 
 /**
@@ -247,26 +247,26 @@ async function openRiskDetail(riskId) {
   const r = State.risks.find((x) => x['風險ID'] === riskId);
   if (!r) return;
   const isAdmin = State.session.isAdmin;
+  const items = r.items || [];
+  const hasItems = items.length > 0;
 
-  const itemsHtml = (r.items || []).map((it) => `
-    <div class="detail-item">
-      <b>項次 ${esc(it['項次'])}</b>
-      <dl class="kv" style="margin-top:8px;">
-        <dt>建議改善事項</dt><dd>${esc(it['建議改善事項'])}</dd>
-        <dt>發生原因</dt><dd>${esc(it['發生原因'])}</dd>
-        <dt>改善措施</dt><dd>${esc(it['改善措施'])}</dd>
-        <dt>預定完成</dt><dd>${esc(it['預定完成時間'])}</dd>
-        <dt>執行進度</dt><dd>${esc(it['執行進度'])}</dd>
-        <dt>處理人</dt><dd>${esc(it['處理人'])}</dd>
-      </dl>
-    </div>`).join('');
+  const itemsHtml = items.map((it) => itemCardHtml(it)).join('');
 
-  const evidence = r['佐證連結']
-    ? '<div class="evidence-list">' + String(r['佐證連結']).split('\n').map((line) => {
-        const url = (line.match(/https?:\/\/\S+/) || [''])[0];
-        return url ? `<a href="${esc(url)}" target="_blank">${esc(line)}</a>` : `<span>${esc(line)}</span>`;
-      }).join('') + '</div>'
-    : '<span class="muted">尚無佐證</span>';
+  // 有項次者：主狀態由項次完成情形自動推導，故只讀顯示；無項次者沿用手動狀態 + 風險層級上傳。
+  const manualPanel = `
+      <div class="panel" style="margin-top:16px;">
+        <div class="section-label">更新狀態 / 上傳佐證</div>
+        <div class="form-grid">
+          <div class="field">
+            <label class="field__label">當前狀態</label>
+            <select id="editStatus">${State.meta.options.STATUSES.map((s) => `<option ${s === r['當前狀態'] ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
+          </div>
+          <div class="field">
+            <label class="field__label">上傳佐證檔案</label>
+            <input type="file" id="evidenceFile" multiple>
+          </div>
+        </div>
+      </div>`;
 
   openModal(`
     <div class="modal__head">
@@ -282,39 +282,82 @@ async function openRiskDetail(riskId) {
         <dt>風險描述</dt><dd>${esc(r['風險描述'])}</dd>
         <dt>風險等級</dt><dd>${levelTag(r['風險等級'])}</dd>
         <dt>處理方式</dt><dd>${esc(r['處理方式'])}</dd>
-        <dt>當前狀態</dt><dd id="dtStatus">${statusTag(r['當前狀態'])}</dd>
+        <dt>當前狀態</dt><dd id="dtStatus">${statusTag(r['當前狀態'])}${hasItems ? ' <span class="muted" style="font-size:12px;">（依各項次完成情形自動更新）</span>' : ''}</dd>
         <dt>處理人</dt><dd>${esc((r['處理人List'] || []).join('、'))}</dd>
         <dt>預計完成日</dt><dd>${esc(r['預計完成日'])}</dd>
         <dt>最後更新</dt><dd class="mono">${esc(r['最後更新時間'])}</dd>
-        <dt>佐證</dt><dd>${evidence}</dd>
+        ${hasItems ? '' : `<dt>佐證</dt><dd>${evidenceListHtml(r['佐證連結'])}</dd>`}
       </dl>
-      ${itemsHtml ? `<div class="detail-items"><div class="section-label">矯正缺失單項次</div>${itemsHtml}</div>` : ''}
-
-      <div class="panel" style="margin-top:16px;">
-        <div class="section-label">更新狀態 / 上傳佐證</div>
-        <div class="form-grid">
-          <div class="field">
-            <label class="field__label">當前狀態</label>
-            <select id="editStatus">${State.meta.options.STATUSES.map((s) => `<option ${s === r['當前狀態'] ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
-          </div>
-          <div class="field">
-            <label class="field__label">上傳佐證檔案</label>
-            <input type="file" id="evidenceFile" multiple>
-          </div>
-        </div>
-      </div>
+      ${hasItems
+        ? `<div class="detail-items"><div class="section-label">矯正缺失單項次（逐項回報狀態與上傳佐證）</div>${itemsHtml}</div>`
+        : manualPanel}
     </div>
     <div class="modal__foot">
       ${isAdmin ? `<button class="btn btn--danger" id="btnDelete">刪除風險</button>` : ''}
       <button class="btn btn--ghost" data-close>關閉</button>
-      <button class="btn btn--primary" id="btnSaveDetail">儲存變更</button>
+      ${hasItems ? '' : `<button class="btn btn--primary" id="btnSaveDetail">儲存變更</button>`}
     </div>
   `);
 
-  $('#btnSaveDetail').addEventListener('click', () => saveRiskDetail(riskId));
+  if (hasItems) {
+    items.forEach((it) => {
+      const seq = it['項次'];
+      const btn = document.querySelector(`[data-save-item="${seq}"]`);
+      if (btn) btn.addEventListener('click', () => saveItemDetail(riskId, seq));
+    });
+  } else {
+    $('#btnSaveDetail').addEventListener('click', () => saveRiskDetail(riskId));
+  }
   if (isAdmin) $('#btnDelete').addEventListener('click', () => confirmDelete(riskId));
 }
 
+/** 單一項次卡片：唯讀內容 + 狀態下拉 + 既有佐證 + 上傳 + 「儲存此項次」。 */
+function itemCardHtml(it) {
+  const seq = it['項次'];
+  const cur = it['狀態'] || '處理中';
+  const statuses = State.meta.options.ITEM_STATUSES || ['處理中', '已完成'];
+  const opts = statuses.map((s) => `<option ${s === cur ? 'selected' : ''}>${esc(s)}</option>`).join('');
+  return `
+    <div class="detail-item">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <b>項次 ${esc(seq)}</b>
+        <span class="tag ${cur === '已完成' ? 'tag--closed' : 'tag--progress'}">${esc(cur)}</span>
+      </div>
+      <dl class="kv" style="margin-top:8px;">
+        <dt>建議改善事項</dt><dd>${esc(it['建議改善事項'])}</dd>
+        <dt>發生原因</dt><dd>${esc(it['發生原因'])}</dd>
+        <dt>改善措施</dt><dd>${esc(it['改善措施'])}</dd>
+        <dt>預定完成</dt><dd>${esc(it['預定完成時間'])}</dd>
+        <dt>執行進度</dt><dd>${esc(it['執行進度'])}</dd>
+        <dt>處理人</dt><dd>${esc(it['處理人'])}</dd>
+        <dt>佐證</dt><dd>${evidenceListHtml(it['佐證連結'])}</dd>
+      </dl>
+      <div class="form-grid" style="margin-top:8px;">
+        <div class="field">
+          <label class="field__label">更新狀態</label>
+          <select data-item-status="${esc(seq)}">${opts}</select>
+        </div>
+        <div class="field">
+          <label class="field__label">上傳佐證檔案</label>
+          <input type="file" data-item-file="${esc(seq)}" multiple>
+        </div>
+      </div>
+      <div style="text-align:right;margin-top:8px;">
+        <button class="btn btn--primary btn--sm" data-save-item="${esc(seq)}">儲存此項次</button>
+      </div>
+    </div>`;
+}
+
+/** 佐證連結（換行分隔的「檔名 連結」）渲染為可點清單。 */
+function evidenceListHtml(raw) {
+  if (!raw) return '<span class="muted">尚無佐證</span>';
+  return '<div class="evidence-list">' + String(raw).split('\n').map((line) => {
+    const url = (line.match(/https?:\/\/\S+/) || [''])[0];
+    return url ? `<a href="${esc(url)}" target="_blank">${esc(line)}</a>` : `<span>${esc(line)}</span>`;
+  }).join('') + '</div>';
+}
+
+/** 無項次風險：手動更新主狀態 + 風險層級佐證上傳。 */
 async function saveRiskDetail(riskId) {
   const btn = $('#btnSaveDetail');
   setLoading(btn, true);
@@ -327,6 +370,23 @@ async function saveRiskDetail(riskId) {
     renderList();
   } catch (err) { toast(err.message || err, 'err'); }
   finally { setLoading(btn, false); }
+}
+
+/** 逐項次回報：更新該項次狀態並上傳其佐證，主狀態由後端自動推導。 */
+async function saveItemDetail(riskId, seq) {
+  const btn = document.querySelector(`[data-save-item="${seq}"]`);
+  setLoading(btn, true);
+  try {
+    const fileEl = document.querySelector(`[data-item-file="${seq}"]`);
+    const statusEl = document.querySelector(`[data-item-status="${seq}"]`);
+    const files = await readFiles(fileEl.files);
+    const updated = await gas('api_updateItem', riskId, seq, { '狀態': statusEl.value, files: files });
+    // 用回傳的最新風險更新本地快取並重繪詳情，讓佐證清單與主狀態即時反映
+    const idx = State.risks.findIndex((x) => x['風險ID'] === riskId);
+    if (idx >= 0) State.risks[idx] = updated;
+    toast('已儲存項次 ' + seq, 'ok');
+    openRiskDetail(riskId);
+  } catch (err) { toast(err.message || err, 'err'); setLoading(btn, false); }
 }
 
 function confirmDelete(riskId) {

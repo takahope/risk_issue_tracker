@@ -26,6 +26,7 @@ const RiskService = (function () {
     const riskId = generateRiskId_();
     const now = nowTimestamp_();
 
+    const hasItems = Array.isArray(payload.items) && payload.items.length > 0;
     const record = {
       '風險ID': riskId,
       '發現來源': payload.發現來源,
@@ -33,7 +34,10 @@ const RiskService = (function () {
       '風險描述': payload.風險描述 || '',
       '風險等級': payload.風險等級 || '',
       '處理方式': payload.處理方式 || '',
-      '當前狀態': payload.當前狀態 || CONFIG.OPTIONS.STATUSES[0],
+      // 有項次者主狀態改由項次自動推導，避免與逐項回報不一致
+      '當前狀態': hasItems
+        ? (computeAutoStatusFromItems_(payload.items) || payload.當前狀態 || CONFIG.OPTIONS.STATUSES[0])
+        : (payload.當前狀態 || CONFIG.OPTIONS.STATUSES[0]),
       '處理人': serializePeople_(payload.處理人),
       '預計完成日': payload.預計完成日 || '',
       '最後更新時間': now,
@@ -42,7 +46,7 @@ const RiskService = (function () {
     SheetRepo.appendObject(sheet, CONFIG.MAIN_HEADERS, record);
 
     // 若該來源有子表，連同項次一併寫入
-    if (Array.isArray(payload.items) && payload.items.length > 0) {
+    if (hasItems) {
       CorrectiveService.replaceItems(riskId, payload.發現來源, payload.items);
     }
 
@@ -99,6 +103,8 @@ const RiskService = (function () {
 
     if (Array.isArray(updates.items)) {
       CorrectiveService.replaceItems(riskId, merged['發現來源'], updates.items);
+      // 項次整批變更後，依完成情形重算主狀態（已結案者於 refreshAutoStatus 內保留）
+      refreshAutoStatus(riskId);
     }
     return getRisk(riskId);
   }
@@ -123,7 +129,36 @@ const RiskService = (function () {
     return listRisks().filter((risk) => risk['當前狀態'] !== CONFIG.CLOSED_STATUS);
   }
 
+  /**
+   * 依子項次完成情形重算主風險的「當前狀態」。
+   *
+   * 規則：有項次時，全部完成 → 待驗證；尚有未完成 → 處理中。
+   * 已結案者保持不變（結案為管理者驗證後的單向終態，不被自動拉回）；
+   * 無項次者不自動推導（維持手動狀態）。
+   *
+   * @param {string} riskId
+   */
+  function refreshAutoStatus(riskId) {
+    const risk = getRisk(riskId);
+    if (!risk) return;
+    if (risk['當前狀態'] === CONFIG.CLOSED_STATUS) return;
+
+    const next = computeAutoStatusFromItems_(risk.items);
+    if (next && next !== risk['當前狀態']) updateRisk(riskId, { '當前狀態': next });
+  }
+
   // ── 內部輔助 ──
+
+  /**
+   * 由項次清單推導主狀態；無項次回傳 null（表示不自動推導）。
+   * @param {Array<Object>} items
+   * @returns {string|null}
+   */
+  function computeAutoStatusFromItems_(items) {
+    if (!Array.isArray(items) || items.length === 0) return null;
+    const allDone = items.every((it) => (it['狀態'] || it.status) === CONFIG.ITEM_DONE_STATUS);
+    return allDone ? CONFIG.TO_VERIFY_STATUS : CONFIG.IN_PROGRESS_STATUS;
+  }
 
   /**
    * 產生風險ID，格式比照範例：RISK-YYYYMMDD-####（4 位流水）。
@@ -177,6 +212,7 @@ const RiskService = (function () {
     updateRisk,
     deleteRisk,
     listOpenRisks,
+    refreshAutoStatus,
     // 對外暴露序列化工具供匯入服務重用
     serializePeople_,
   };

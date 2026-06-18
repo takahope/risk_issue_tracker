@@ -38,6 +38,30 @@ const FileService = (function () {
     return files.map((file) => uploadEvidence(riskId, file));
   }
 
+  /**
+   * 為「某項次」上傳佐證：建立 Drive 檔案並回傳連結字串（"檔名 連結"），
+   * 不寫入任何工作表——連結由 CorrectiveService 附加到該項次的「佐證連結」欄，
+   * 維持單一職責（本服務只管 Drive，不管子表結構）。
+   *
+   * @param {string} riskId
+   * @param {Array<Object>} files - [{ name, mimeType, base64 }]
+   * @returns {string[]} 連結字串陣列
+   */
+  function uploadItemEvidences(riskId, files) {
+    if (!riskId) throw new Error('缺少風險ID，無法上傳佐證。');
+    if (!Array.isArray(files)) return [];
+
+    const folder = getRiskFolder_(riskId);
+    return files.map((file) => {
+      if (!file || !file.base64) throw new Error('檔案內容為空，請重新選擇檔案。');
+      const bytes = Utilities.base64Decode(file.base64);
+      const blob = Utilities.newBlob(bytes, file.mimeType || 'application/octet-stream', file.name || 'evidence');
+      const created = folder.createFile(blob);
+      created.setDescription('風險佐證：' + riskId);
+      return created.getName() + ' ' + created.getUrl();
+    });
+  }
+
   // ── 內部輔助 ──
 
   /**
@@ -64,5 +88,5 @@ const FileService = (function () {
     cell.setValue(existing ? existing + '\n' + entry : entry);
   }
 
-  return { uploadEvidence, uploadEvidences };
+  return { uploadEvidence, uploadEvidences, uploadItemEvidences };
 })();

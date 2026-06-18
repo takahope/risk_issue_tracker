@@ -23,11 +23,12 @@ const CONFIG = {
 
   /**
    * 子表（矯正缺失單）欄位。以「風險ID」與主表一對多關聯，
-   * 每一列代表一個「項次」，並各自擁有「處理人」。
+   * 每一列代表一個「項次」，並各自擁有「處理人」、「狀態」與「佐證連結」。
+   * 註：「狀態」「佐證連結」為後續新增欄位，由 ensureSheet 安全前綴擴充自動補欄。
    */
   SUB_HEADERS: [
     '風險ID', '項次', '建議改善事項', '發生原因', '改善措施',
-    '預定完成時間', '執行進度', '處理人',
+    '預定完成時間', '執行進度', '處理人', '狀態', '佐證連結',
   ],
 
   // ── 預設表單選項（來源：example/option.md）──
@@ -36,6 +37,8 @@ const CONFIG = {
     LEVELS: ['極高 (Critical)', '高 (High)', '中 (Medium)', '低 (Low)'],
     TREATMENTS: ['降低 (Mitigate)', '接受 (Accept)', '轉移 (Transfer)', '避免 (Avoid)'],
     STATUSES: ['待處理 (Open)', '處理中 (In Progress)', '待驗證 (To Verify)', '已結案 (Closed)'],
+    // 子項次狀態（二元）：處理人逐項回報；主風險狀態由此自動推導
+    ITEM_STATUSES: ['處理中', '已完成'],
   },
 
   // 多人欄位的序列化分隔符（比照範例以「、」分隔）
@@ -43,6 +46,14 @@ const CONFIG = {
 
   // 視為「已結案」的狀態值（通知功能用以過濾）
   CLOSED_STATUS: '已結案 (Closed)',
+
+  // 子項次完成判定與預設值（主狀態自動推導用）
+  ITEM_DONE_STATUS: '已完成',
+  ITEM_DEFAULT_STATUS: '處理中',
+
+  // 主狀態自動推導目標值（須與 OPTIONS.STATUSES 內字串一致）
+  IN_PROGRESS_STATUS: '處理中 (In Progress)', // 尚有項次未完成
+  TO_VERIFY_STATUS: '待驗證 (To Verify)',     // 全部項次完成，待管理者驗證結案
 
   // ── Script Properties 鍵名（部署時於設定畫面填入）──
   PROP_KEYS: {

@@ -148,6 +148,33 @@ function api_uploadEvidence(riskId, files) {
 }
 
 /**
+ * 逐項次回報：更新某項次的狀態並上傳該項次佐證（管理者與被指派處理者皆可）。
+ *
+ * 流程：權限守門 → 上傳佐證（附加到該項次「佐證連結」）→ 更新項次狀態
+ * → 依各項次完成情形重算主風險狀態 → 回傳更新後的完整風險供前端重繪。
+ *
+ * @param {string} riskId
+ * @param {number|string} seq - 項次序號
+ * @param {Object} payload - { 狀態?, files?: Array<{name,mimeType,base64}> }
+ */
+function api_updateItem(riskId, seq, payload) {
+  const risk = RiskService.getRisk(riskId);
+  if (!risk) throw new Error('找不到此風險ID：' + riskId);
+  if (!AuthService.isAdmin() && !AuthService.isAssignedToCurrentUser(risk)) {
+    throw new Error('權限不足：您只能更新被指派的風險。');
+  }
+
+  const data = payload || {};
+  const evidenceLinks = (Array.isArray(data.files) && data.files.length)
+    ? FileService.uploadItemEvidences(riskId, data.files)
+    : [];
+
+  CorrectiveService.updateItem(riskId, seq, { 狀態: data.狀態, evidenceLinks: evidenceLinks });
+  RiskService.refreshAutoStatus(riskId);
+  return RiskService.getRisk(riskId);
+}
+
+/**
  * 通知處理人（僅管理者）。
  * @param {Array<Object>} targets - 收件人描述陣列，每筆 { riskId, notifyMain, itemIndices }
  */
