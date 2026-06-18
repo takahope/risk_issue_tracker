@@ -18,7 +18,7 @@ const GmailNotificationService = {
   send: function (recipients, subject, htmlBody) {
     const list = (Array.isArray(recipients) ? recipients : [recipients]).filter(function (e) { return e; });
     if (list.length === 0) return;
-    GmailApp.sendEmail(list.join(','), subject, '', { htmlBody: htmlBody, name: '高風險追蹤系統' });
+    GmailApp.sendEmail(list.join(','), subject, '', { htmlBody: htmlBody, name: '風險追蹤管理' });
   },
 };
 
@@ -194,7 +194,7 @@ const NotificationService = (function () {
     // ── 如何完成處理 ──
     parts.push(buildHowToSection_(appUrl));
 
-    parts.push('<p style="color:#5f6d66;font-size:13px;margin-top:16px;">此信由「高風險追蹤系統」自動發送，請勿直接回覆。</p>');
+    parts.push('<p style="color:#5f6d66;font-size:13px;margin-top:16px;">此信由「風險追蹤管理」自動發送，請勿直接回覆。</p>');
     parts.push('</div>');
     return parts.join('');
   }
