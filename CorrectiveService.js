@@ -57,6 +57,29 @@ const CorrectiveService = (function () {
   }
 
   /**
+   * 無條件寫入某風險的項次（不受來源 schema 是否定義子表限制）。
+   *
+   * 供 AI 匯入使用：AI 從弱掃／滲透／稽核報告擷取的矯正項次，無論其「發現來源」
+   * 是否在 FORM_SCHEMAS 註冊子表，都應完整保留，避免如 replaceItems 因
+   * `schema.subTable` 為空而靜默丟棄。先清掉既有項次再依序寫入。
+   *
+   * @param {string} riskId
+   * @param {Array<Object>} items - 項次資料（鍵可為語意化 key 或中文欄名）
+   * @returns {number} 實際寫入的項次數
+   */
+  function importItems(riskId, items) {
+    deleteByRiskId(riskId);
+    if (!Array.isArray(items) || items.length === 0) return 0;
+
+    const sheet = SheetRepo.getSubSheet();
+    items.forEach((item, index) => {
+      SheetRepo.appendObject(sheet, CONFIG.SUB_HEADERS, toSubRecord_(riskId, item, index + 1));
+    });
+    SpreadsheetApp.flush(); // 寫入後強制 flush，確保後續即時讀取一致
+    return items.length;
+  }
+
+  /**
    * 就地更新某風險的單一項次（不重建整批，保留其他項次的狀態與佐證）。
    *
    * 供「逐項次回報」使用：可更新狀態、並把新佐證連結附加到該項次的
@@ -143,5 +166,5 @@ const CorrectiveService = (function () {
     };
   }
 
-  return { listItems, groupByRiskId, replaceItems, updateItem, deleteByRiskId };
+  return { listItems, groupByRiskId, replaceItems, importItems, updateItem, deleteByRiskId };
 })();

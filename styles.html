@@ -322,4 +322,72 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .mono { font-family: var(--font-data); }
 .spinner { display:inline-block; width:14px; height:14px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:999px; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── AI 上傳區域 ── */
+.ai-upload {
+  border: 2px dashed rgba(15,123,104,.3);
+  border-radius: 12px;
+  padding: 32px;
+  text-align: center;
+  transition: border-color .2s, background .2s;
+  background: rgba(15,123,104,.03);
+}
+.ai-upload:hover, .ai-upload.is-dragover {
+  border-color: var(--accent);
+  background: rgba(15,123,104,.06);
+}
+.ai-upload__icon { font-size: 32px; margin-bottom: 8px; }
+.ai-upload__text { color: var(--muted); margin-bottom: 8px; }
+.ai-upload__name { margin-top: 8px; font-family: var(--font-data); font-size: 13px; color: var(--accent-dark); }
+
+/* ── AI Key 輸入框 ── */
+.ai-key-wrap { display: flex; gap: 8px; align-items: center; }
+.ai-key-wrap input { flex: 1; font-family: var(--font-data); letter-spacing: 1px; }
+
+/* ── AI 預覽卡片 ── */
+.ai-preview-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+  position: relative;
+  animation: stage-in .3s ease;
+}
+.ai-preview-card__head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.ai-preview-card__badge {
+  background: linear-gradient(135deg, #0f7b68, #1a9c85);
+  color: #fff; font-size: 11px; padding: 2px 8px;
+  border-radius: 99px; font-weight: 600;
+}
+.ai-items { margin-top: 12px; }
+.ai-item {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  margin-top: 8px;
+  background: var(--field);
+}
+
+/* ── 欄位缺失警示 ── */
+.ai-field--missing {
+  background: rgba(217,154,50,.1);
+  border-color: var(--gold) !important;
+}
+
+/* ── AI 分析動畫 ── */
+.ai-progress { text-align: center; padding: 48px 16px; }
+.ai-progress__pulse {
+  width: 48px; height: 48px; margin: 0 auto 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: ai-pulse 1.5s ease-in-out infinite;
+}
+@keyframes ai-pulse {
+  0%, 100% { transform: scale(.85); opacity: .5; box-shadow: 0 0 0 0 rgba(15,123,104,.3); }
+  50% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 14px rgba(15,123,104,0); }
+}
 </style>

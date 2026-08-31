@@ -44,6 +44,34 @@ const SettingsService = (function () {
   }
 
   /**
+   * 取得 Gemini API Key；未設定時拋出明確錯誤（供 AI 匯入呼叫前置檢查）。
+   * @returns {string}
+   */
+  function getGeminiApiKey() {
+    const key = get(CONFIG.PROP_KEYS.GEMINI_API_KEY);
+    if (!key) throw new Error('尚未設定 Gemini API Key，請先至「設定」畫面填入。');
+    return key;
+  }
+
+  /** 取得 Gemini 模型名稱，預設 CONFIG.GEMINI_DEFAULT_MODEL。 */
+  function getGeminiModel() {
+    return get(CONFIG.PROP_KEYS.GEMINI_MODEL, CONFIG.GEMINI_DEFAULT_MODEL);
+  }
+
+  /**
+   * 取得遮罩後的 API Key（僅顯示前 4 碼 + 後 4 碼）。
+   * 前端設定頁面使用，避免完整 Key 暴露在瀏覽器中。
+   * 以全形圓點作遮罩字元，後端 save() 會據此辨識「未變更」。
+   * @returns {string}
+   */
+  function getMaskedApiKey_() {
+    const key = get(CONFIG.PROP_KEYS.GEMINI_API_KEY);
+    if (!key) return '';
+    if (key.length <= 8) return '••••••••';
+    return key.slice(0, 4) + '••••••••' + key.slice(-4);
+  }
+
+  /**
    * 取得管理者 email 清單（小寫、去空白）。
    * @returns {string[]}
    */
@@ -66,6 +94,9 @@ const SettingsService = (function () {
       hrSheetName: get(CONFIG.PROP_KEYS.HR_SHEET_NAME, CONFIG.HR_DEFAULT_SHEET_NAME),
       evidenceFolderId: get(CONFIG.PROP_KEYS.EVIDENCE_FOLDER_ID),
       adminEmails: get(CONFIG.PROP_KEYS.ADMIN_EMAILS),
+      geminiApiKey: getMaskedApiKey_(),                       // 遮罩後的 Key（前端顯示用）
+      geminiModel: getGeminiModel(),                          // 當前模型名稱
+      hasGeminiKey: !!get(CONFIG.PROP_KEYS.GEMINI_API_KEY),   // 是否已設定（前端判斷 UI 狀態）
     };
   }
 
@@ -79,6 +110,18 @@ const SettingsService = (function () {
     if (settings.hrSheetName !== undefined) map[CONFIG.PROP_KEYS.HR_SHEET_NAME] = settings.hrSheetName.trim();
     if (settings.evidenceFolderId !== undefined) map[CONFIG.PROP_KEYS.EVIDENCE_FOLDER_ID] = settings.evidenceFolderId.trim();
     if (settings.adminEmails !== undefined) map[CONFIG.PROP_KEYS.ADMIN_EMAILS] = settings.adminEmails.trim();
+    // API Key 寫入規則：
+    //   '____KEEP____' = 前端未修改 → 不覆寫
+    //   含遮罩字元 '•' = 前端只是「顯示」遮罩值卻未真正輸入新 Key → 不覆寫（防誤存）
+    //   空字串 = 使用者清除 → 清空
+    //   其他 = 貼上新 Key → 覆寫
+    if (settings.geminiApiKey !== undefined) {
+      const raw = String(settings.geminiApiKey);
+      if (raw !== '____KEEP____' && raw.indexOf('•') === -1) {
+        map[CONFIG.PROP_KEYS.GEMINI_API_KEY] = raw.trim();
+      }
+    }
+    if (settings.geminiModel !== undefined) map[CONFIG.PROP_KEYS.GEMINI_MODEL] = settings.geminiModel.trim();
     props.setProperties(map, false);
   }
 
@@ -88,6 +131,8 @@ const SettingsService = (function () {
     getHrSheetName,
     getEvidenceFolderId,
     getAdminEmails,
+    getGeminiApiKey,
+    getGeminiModel,
     getAll,
     save,
   };

@@ -143,6 +143,7 @@ const VIEW_META = {
   create:   { title: '新增風險', desc: '依發現來源填寫對應表單欄位', render: renderCreate },
   notify:   { title: '通知中心', desc: '寄信通知尚未結案風險的處理人', render: renderNotify },
   io:       { title: '匯入匯出', desc: '依發現來源匯入 CSV / Excel，或匯出 CSV', render: renderIO },
+  aiImport: { title: 'AI 智慧匯入', desc: '上傳 PDF 文件，由 AI 自動擷取風險項目', render: renderAiImport },
   settings: { title: '系統設定', desc: '人員主檔、佐證資料夾與管理者設定', render: renderSettings },
 };
 
@@ -827,6 +828,251 @@ async function doExport() {
 }
 
 // ════════════════════════════════════════
+// AI 智慧匯入（PDF → 預覽 → 確認 → 寫入）
+// ════════════════════════════════════════
+const AI_MAX_BYTES = 10 * 1024 * 1024; // 10MB
+let AI_FILE = null;                     // 目前選定的 PDF File 物件
+
+function renderAiImport() {
+  AI_FILE = null;
+  const sources = State.meta.options.SOURCES.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  $('#view').innerHTML = `
+    <div class="panel">
+      <div class="section-label">📄 上傳 PDF 文件</div>
+      <p class="muted" style="margin-bottom:12px;">
+        上傳稽核報告、弱掃報告等 PDF 文件，AI 將自動擷取風險項目與矯正缺失。
+        <br>支援格式：PDF（上限 10MB）。
+      </p>
+      <div class="ai-upload" id="aiDropZone">
+        <div class="ai-upload__icon">📎</div>
+        <div class="ai-upload__text">拖放 PDF 檔案到此處，或</div>
+        <label class="btn btn--ghost btn--sm">
+          選擇檔案 <input type="file" id="aiFile" accept="application/pdf,.pdf" hidden>
+        </label>
+        <div class="ai-upload__name" id="aiFileName"></div>
+      </div>
+      <div class="field" style="margin-top:12px;max-width:320px;">
+        <label class="field__label">發現來源</label>
+        <select id="aiSource">
+          <option value="">（讓 AI 自動判斷）</option>
+          ${sources}
+        </select>
+      </div>
+      <div style="margin-top:12px;">
+        <button class="btn btn--primary" id="btnAiParse">🤖 開始 AI 分析</button>
+      </div>
+    </div>
+    <div id="aiPreview"></div>`;
+
+  bindAiUpload();
+  $('#btnAiParse').addEventListener('click', doAiParse);
+}
+
+/** 綁定拖放與檔案選擇；驗證 PDF 與大小後記錄到 AI_FILE。 */
+function bindAiUpload() {
+  const zone = $('#aiDropZone');
+  const input = $('#aiFile');
+  input.addEventListener('change', () => setAiFile(input.files[0]));
+
+  ['dragenter', 'dragover'].forEach((ev) => zone.addEventListener(ev, (e) => {
+    e.preventDefault(); zone.classList.add('is-dragover');
+  }));
+  ['dragleave', 'drop'].forEach((ev) => zone.addEventListener(ev, (e) => {
+    e.preventDefault(); zone.classList.remove('is-dragover');
+  }));
+  zone.addEventListener('drop', (e) => {
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) setAiFile(file);
+  });
+}
+
+function setAiFile(file) {
+  if (!file) return;
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  if (!isPdf) { toast('僅支援 PDF 檔案', 'err'); return; }
+  if (file.size > AI_MAX_BYTES) { toast('檔案超過 10MB，請壓縮後再上傳', 'err'); return; }
+  AI_FILE = file;
+  $('#aiFileName').textContent = '已選擇：' + file.name + '（' + (file.size / 1024 / 1024).toFixed(2) + ' MB）';
+}
+
+/** 步驟 1：讀檔 → 呼叫後端 AI 解析 → 顯示預覽。 */
+async function doAiParse() {
+  if (!AI_FILE) return toast('請先選擇 PDF 檔案', 'err');
+  const btn = $('#btnAiParse');
+  setLoading(btn, true);
+  $('#aiPreview').innerHTML = aiProgressHtml();
+  try {
+    const [file] = await readFiles([AI_FILE]);
+    const payload = { base64: file.base64, mimeType: file.mimeType || 'application/pdf', source: $('#aiSource').value };
+    const result = await gas('api_aiParsePdf', payload);
+    renderAiPreview(result.risks || [], result.model);
+  } catch (err) {
+    $('#aiPreview').innerHTML = `<div class="panel"><div class="empty"><h3>AI 分析失敗</h3><p>${esc(err.message || err)}</p></div></div>`;
+  } finally { setLoading(btn, false); }
+}
+
+function aiProgressHtml() {
+  return `
+    <div class="panel">
+      <div class="ai-progress">
+        <div class="ai-progress__pulse"></div>
+        <p class="muted">AI 正在分析文件，請稍候…<br>大型文件可能需要數十秒。</p>
+      </div>
+    </div>`;
+}
+
+/** 步驟 2：渲染可編輯預覽卡片。 */
+function renderAiPreview(risks, model) {
+  const wrap = $('#aiPreview');
+  if (!risks.length) {
+    wrap.innerHTML = `<div class="panel"><div class="empty"><h3>未偵測到風險資料</h3><p>請確認文件內容，或改用其他文件重試。</p></div></div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <div class="panel">
+      <div class="panel__head">
+        <div class="section-label" style="margin:0;">🔎 AI 預覽結果（共 ${risks.length} 筆，可修改或移除後再匯入）</div>
+        <span class="muted" style="font-size:12px;">模型：${esc(model || '')}</span>
+      </div>
+      <div id="aiCards">${risks.map((r, i) => aiCardHtml(r, i)).join('')}</div>
+      <div style="margin-top:16px;text-align:right;">
+        <button class="btn btn--primary" id="btnAiConfirm">✅ 確認匯入</button>
+      </div>
+    </div>`;
+
+  bindAiPreviewEvents();
+  updateAiConfirmLabel();
+}
+
+/** 單筆風險的可編輯卡片。空白欄位以黃色警示標記提醒人工補齊。 */
+function aiCardHtml(r, idx) {
+  const items = Array.isArray(r.items) ? r.items : [];
+  return `
+    <div class="ai-preview-card" data-ai-card="${idx}">
+      <div class="ai-preview-card__head">
+        <span class="ai-preview-card__badge">風險 ${idx + 1}</span>
+        <button type="button" class="btn btn--ghost btn--sm" data-ai-remove>🗑 移除</button>
+      </div>
+      <div class="form-grid">
+        <div class="field field--full">
+          <label class="field__label">風險標題</label>
+          <input type="text" data-ai-field="風險標題" value="${esc(r['風險標題'])}" class="${aiMissCls(r['風險標題'])}">
+        </div>
+        <div class="field field--full">
+          <label class="field__label">風險描述</label>
+          <textarea data-ai-field="風險描述" class="${aiMissCls(r['風險描述'])}">${esc(r['風險描述'])}</textarea>
+        </div>
+        <div class="field">
+          <label class="field__label">發現來源</label>
+          <select data-ai-field="發現來源" class="${aiMissCls(r['發現來源'])}">${aiOpts('SOURCES', r['發現來源'], true)}</select>
+        </div>
+        <div class="field">
+          <label class="field__label">風險等級</label>
+          <select data-ai-field="風險等級" class="${aiMissCls(r['風險等級'])}">${aiOpts('LEVELS', r['風險等級'], true)}</select>
+        </div>
+        <div class="field">
+          <label class="field__label">處理方式</label>
+          <select data-ai-field="處理方式" class="${aiMissCls(r['處理方式'])}">${aiOpts('TREATMENTS', r['處理方式'], true)}</select>
+        </div>
+        <div class="field">
+          <label class="field__label">預計完成日</label>
+          <input type="date" data-ai-field="預計完成日" value="${esc(r['預計完成日'])}">
+        </div>
+      </div>
+      ${aiItemsHtml(items)}
+    </div>`;
+}
+
+function aiItemsHtml(items) {
+  if (!items.length) return '<p class="muted" style="margin-top:8px;font-size:13px;">（此風險無矯正項次）</p>';
+  const rows = items.map((it) => `
+    <div class="ai-item" data-ai-item>
+      <div class="form-grid">
+        <div class="field field--full"><label class="field__label">建議改善事項</label><textarea data-ai-item-field="建議改善事項" class="${aiMissCls(it['建議改善事項'])}">${esc(it['建議改善事項'])}</textarea></div>
+        <div class="field field--full"><label class="field__label">改善措施</label><textarea data-ai-item-field="改善措施">${esc(it['改善措施'])}</textarea></div>
+        <div class="field"><label class="field__label">發生原因</label><input type="text" data-ai-item-field="發生原因" value="${esc(it['發生原因'])}"></div>
+        <div class="field"><label class="field__label">預定完成時間</label><input type="date" data-ai-item-field="預定完成時間" value="${esc(it['預定完成時間'])}"></div>
+        <div class="field"><label class="field__label">執行進度</label><input type="text" data-ai-item-field="執行進度" value="${esc(it['執行進度'])}"></div>
+      </div>
+      <div style="text-align:right;"><button type="button" class="btn btn--ghost btn--sm" data-ai-item-remove>移除項次</button></div>
+    </div>`).join('');
+  return `<div class="ai-items"><div class="section-label" style="font-size:12px;margin-top:12px;">矯正缺失項次（${items.length}）</div>${rows}</div>`;
+}
+
+/** 空字串回傳警示 class，提醒管理者人工補齊。 */
+function aiMissCls(val) { return (val == null || String(val).trim() === '') ? 'ai-field--missing' : ''; }
+
+/** 產生下拉選項；needBlank 為 true 時加入空白選項，並在 AI 值不在清單時保留空白。 */
+function aiOpts(optionsKey, value, needBlank) {
+  const opts = State.meta.options[optionsKey] || [];
+  const matched = opts.includes(value);
+  const blank = needBlank ? `<option value="" ${matched ? '' : 'selected'}>（請選擇）</option>` : '';
+  return blank + opts.map((o) => `<option value="${esc(o)}" ${o === value ? 'selected' : ''}>${esc(o)}</option>`).join('');
+}
+
+function bindAiPreviewEvents() {
+  $$('#aiCards [data-ai-remove]').forEach((btn) => btn.addEventListener('click', (e) => {
+    e.target.closest('[data-ai-card]').remove();
+    updateAiConfirmLabel();
+  }));
+  $$('#aiCards [data-ai-item-remove]').forEach((btn) => btn.addEventListener('click', (e) => {
+    e.target.closest('[data-ai-item]').remove();
+  }));
+  $('#btnAiConfirm').addEventListener('click', doAiConfirm);
+}
+
+function updateAiConfirmLabel() {
+  const n = $$('#aiCards [data-ai-card]').length;
+  const btn = $('#btnAiConfirm');
+  if (btn) btn.textContent = '✅ 確認匯入 ' + n + ' 筆風險';
+}
+
+/** 步驟 3：從 DOM 收集（可能已編輯的）預覽資料，寫入後端。 */
+async function doAiConfirm() {
+  const cards = $$('#aiCards [data-ai-card]');
+  if (!cards.length) return toast('沒有可匯入的風險', 'err');
+
+  const risks = cards.map((card) => {
+    const risk = {};
+    $$('[data-ai-field]', card).forEach((el) => { risk[el.dataset.aiField] = el.value; });
+    risk.items = $$('[data-ai-item]', card).map((itemEl) => {
+      const item = {};
+      $$('[data-ai-item-field]', itemEl).forEach((el) => { item[el.dataset.aiItemField] = el.value; });
+      return item;
+    });
+    return risk;
+  }).filter((r) => (r['風險標題'] || '').trim());
+
+  if (!risks.length) return toast('請至少保留一筆含標題的風險', 'err');
+
+  const btn = $('#btnAiConfirm');
+  setLoading(btn, true);
+  try {
+    const result = await gas('api_aiImportConfirm', risks);
+    const failed = result.failed || [];
+    if (failed.length) {
+      // 部分失敗：移除已成功的卡片（以標題逐一消耗失敗清單，相容同名），只留下失敗者供重試，
+      // 並停留在當頁——避免使用者誤判整批失敗而重送、把已成功者重複寫入。
+      const failTitles = failed.map((f) => (f['風險標題'] || '').trim());
+      $$('#aiCards [data-ai-card]').forEach((card) => {
+        const titleEl = card.querySelector('[data-ai-field="風險標題"]');
+        const t = (titleEl ? titleEl.value : '').trim();
+        const i = failTitles.indexOf(t);
+        if (i === -1) card.remove();      // 不在失敗清單 → 已成功 → 移除
+        else failTitles.splice(i, 1);     // 在失敗清單 → 保留並消耗一個名額
+      });
+      updateAiConfirmLabel();
+      const detail = failed.map((f) => f['風險標題'] || '(未命名)').join('、');
+      toast(`已匯入 ${result.importedRisks} 筆、${result.importedItems} 個項次；${failed.length} 筆失敗，請檢視後重試：${detail}`, 'err');
+    } else {
+      toast(`匯入完成：${result.importedRisks} 筆風險、${result.importedItems} 個項次`, 'ok');
+      switchView('list');
+    }
+  } catch (err) { toast(err.message || err, 'err'); }
+  finally { setLoading(btn, false); }
+}
+
+// ════════════════════════════════════════
 // 設定
 // ════════════════════════════════════════
 async function renderSettings() {
@@ -851,7 +1097,33 @@ async function renderSettings() {
       <div class="section-label">管理者</div>
       <div class="field"><label class="field__label">管理者 email（以逗號分隔）</label><textarea id="setAdmins" placeholder="admin1@example.com, admin2@example.com">${esc(s.adminEmails)}</textarea></div>
     </div>
+    <div class="panel">
+      <div class="section-label">🤖 AI 匯入設定（Gemini API）</div>
+      <div class="form-grid">
+        <div class="field">
+          <label class="field__label">Gemini API Key</label>
+          <div class="ai-key-wrap">
+            <input type="password" id="setGeminiKey" value="${s.hasGeminiKey ? '____KEEP____' : ''}" placeholder="貼上 Google AI Studio API Key" autocomplete="off">
+            <button type="button" class="btn btn--ghost btn--sm" id="btnToggleKey" title="顯示/隱藏 Key">👁</button>
+          </div>
+          ${s.hasGeminiKey
+            ? '<p class="muted" style="margin-top:4px;">目前已設定：<code>' + esc(s.geminiApiKey) + '</code>　<button type="button" class="btn btn--ghost btn--sm" id="btnClearKey">清除</button></p>'
+            : '<p class="muted" style="margin-top:4px;color:var(--danger);">⚠ 尚未設定，AI 匯入功能無法使用。</p>'}
+        </div>
+        <div class="field">
+          <label class="field__label">AI 模型名稱</label>
+          <input type="text" id="setGeminiModel" value="${esc(s.geminiModel)}" placeholder="gemini-2.5-flash">
+          <p class="muted" style="margin-top:4px;">填入 Gemini 模型名稱，例如 <code>gemini-2.5-flash</code>、<code>gemini-2.0-flash</code>、<code>gemini-2.5-pro</code>。留空則使用預設模型。</p>
+        </div>
+      </div>
+      <div style="margin-top:8px;">
+        <button type="button" class="btn btn--ghost btn--sm" id="btnTestGemini">🔗 測試連線</button>
+        <span id="geminiTestResult" class="muted" style="margin-left:8px;"></span>
+      </div>
+    </div>
     <div style="margin-top:16px;"><button class="btn btn--primary" id="btnSaveSettings">儲存設定</button></div>`;
+
+  bindGeminiSettings(s);
 
   $('#btnSaveSettings').addEventListener('click', async () => {
     const btn = $('#btnSaveSettings');
@@ -862,10 +1134,65 @@ async function renderSettings() {
         hrSheetName: $('#setHrSheet').value,
         evidenceFolderId: $('#setFolder').value,
         adminEmails: $('#setAdmins').value,
+        geminiApiKey: geminiKeyToSend_(s),   // '____KEEP____' | '' | 新 Key
+        geminiModel: $('#setGeminiModel').value,
       });
       toast('設定已儲存', 'ok');
+      renderSettings(); // 重繪以反映最新遮罩值與「已設定」狀態
     } catch (err) { toast(err.message || err, 'err'); }
     finally { setLoading(btn, false); }
+  });
+}
+
+/**
+ * 計算要送往後端的 API Key 值：
+ *   - 與遮罩值相同（使用者只是按了「顯示」卻沒改）→ 送哨兵值，不覆寫
+ *   - '____KEEP____' 哨兵 → 不覆寫
+ *   - 空字串 → 清除；其他 → 視為新 Key
+ */
+function geminiKeyToSend_(s) {
+  const val = $('#setGeminiKey').value;
+  if (val === s.geminiApiKey || val.indexOf('•') !== -1) return '____KEEP____';
+  return val;
+}
+
+/** 設定頁 Gemini 區塊的互動：顯示/隱藏 Key、清除、測試連線。 */
+function bindGeminiSettings(s) {
+  const keyInput = $('#setGeminiKey');
+
+  // 顯示/隱藏 Key（哨兵值在顯示時暫以遮罩值呈現，讓使用者知道確有設定）
+  $('#btnToggleKey').addEventListener('click', () => {
+    const isPassword = keyInput.type === 'password';
+    keyInput.type = isPassword ? 'text' : 'password';
+    if (isPassword && keyInput.value === '____KEEP____') keyInput.value = s.geminiApiKey;
+    else if (!isPassword && keyInput.value === s.geminiApiKey) keyInput.value = '____KEEP____';
+  });
+
+  // 清除 Key（儲存後生效）
+  const clearBtn = $('#btnClearKey');
+  if (clearBtn) clearBtn.addEventListener('click', () => {
+    keyInput.value = '';
+    keyInput.type = 'text';
+    keyInput.placeholder = 'Key 已清除，儲存後生效';
+  });
+
+  // 測試連線：使用者輸入新 Key 則用之，否則 null 讓後端用已儲存的 Key
+  $('#btnTestGemini').addEventListener('click', async () => {
+    const result = $('#geminiTestResult');
+    const model = $('#setGeminiModel').value;
+    const keyToSend = geminiKeyToSend_(s);
+    const useKey = (keyToSend === '____KEEP____' || keyToSend === '') ? null : keyToSend;
+
+    result.textContent = '測試中…';
+    result.style.color = '';
+    try {
+      const r = await gas('api_testGeminiConnection', useKey, model);
+      result.textContent = '✅ 連線成功（' + (r.model || model) + '）';
+      result.style.color = 'var(--accent-dark)';
+    } catch (err) {
+      result.textContent = '❌ ' + (err.message || '連線失敗');
+      result.style.color = 'var(--danger)';
+    }
   });
 }
 

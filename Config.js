@@ -61,7 +61,13 @@ const CONFIG = {
     HR_SHEET_NAME: 'HR_SHEET_NAME',         // 人員主檔工作表名稱，預設「人員主檔」
     EVIDENCE_FOLDER_ID: 'EVIDENCE_FOLDER_ID', // 佐證上傳的 Drive 資料夾 ID
     ADMIN_EMAILS: 'ADMIN_EMAILS',           // 管理者 email 清單（以逗號分隔）
+    GEMINI_API_KEY: 'GEMINI_API_KEY',       // Gemini API Key（AI 匯入用；僅存後端，前端僅見遮罩值）
+    GEMINI_MODEL: 'GEMINI_MODEL',           // 使用的 Gemini 模型名稱（管理者可自訂）
   },
+
+  // 預設 Gemini 模型（管理者可在設定中自行填寫其他模型名稱）。
+  // 採用穩定 GA 模型，避免依賴可能失效的 preview model 造成 HTTP 404。
+  GEMINI_DEFAULT_MODEL: 'gemini-2.5-flash',
 
   // HR 工作表預設名稱（人員主檔欄位：信箱/姓名/員工狀態）
   HR_DEFAULT_SHEET_NAME: '人員主檔',

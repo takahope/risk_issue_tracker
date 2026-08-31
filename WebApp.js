@@ -202,3 +202,25 @@ function api_saveSettings(settings) {
   HrService.clearCache(); // 設定變更後清除人員快取
   return SettingsService.getAll();
 }
+
+// ══════════════════════════════════════════════
+// 前端 API — AI 匯入（僅管理者）
+// ══════════════════════════════════════════════
+
+/** AI 解析 PDF（僅管理者）— 步驟 1：回傳預覽資料，尚未寫入。 */
+function api_aiParsePdf(payload) {
+  AuthService.requireAdmin('AI 匯入');
+  return AiImportService.parsePdfWithAi(payload);
+}
+
+/** AI 匯入確認（僅管理者）— 步驟 2：寫入已確認的風險。 */
+function api_aiImportConfirm(risks) {
+  AuthService.requireAdmin('AI 匯入');
+  return AiImportService.confirmAndImport(risks);
+}
+
+/** 測試 Gemini API 連線（僅管理者）。apiKey 可為 null（沿用已儲存的 Key）。 */
+function api_testGeminiConnection(apiKey, model) {
+  AuthService.requireAdmin('測試 AI 連線');
+  return AiImportService.testConnection(apiKey, model);
+}
