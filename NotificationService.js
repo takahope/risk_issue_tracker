@@ -157,7 +157,7 @@ const NotificationService = (function () {
   }
 
   function buildSubject_(risk) {
-    return '【高風險追蹤】待處理風險通知：' + risk['風險標題'];
+    return '【風險追蹤管理】待處理風險通知：' + risk['風險標題'];
   }
 
   /**
@@ -236,7 +236,7 @@ const NotificationService = (function () {
       ? '<p style="margin:12px 0;"><a href="' + escapeHtml_(appUrl) + '" ' +
         'style="display:inline-block;background:#1f6b4f;color:#ffffff;text-decoration:none;' +
         'padding:10px 20px;border-radius:8px;font-weight:700;">前往處理此風險</a></p>'
-      : '<p style="margin:12px 0;color:#5f6d66;">請開啟「高風險追蹤系統」，' +
+      : '<p style="margin:12px 0;color:#5f6d66;">請開啟「風險追蹤管理」，' +
         '於風險清單以上方「風險ID」搜尋並點開該風險後依上述步驟處理。</p>';
 
     return (

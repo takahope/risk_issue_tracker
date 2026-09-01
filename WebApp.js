@@ -16,7 +16,7 @@ function doGet(e) {
   template.riskId = (e && e.parameter && e.parameter.riskId) || '';
   return template
     .evaluate()
-    .setTitle('高風險追蹤系統')
+    .setTitle('風險追蹤管理')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }

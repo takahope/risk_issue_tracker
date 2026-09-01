@@ -1,4 +1,4 @@
-# 高風險追蹤系統（Google Apps Script Web App）
+# 風險追蹤管理（Google Apps Script Web App）
 
 以 Google Sheet 為後端、GAS 為後端邏輯、HTML Service 為前端的資安風險追蹤應用。
 支援多種「發現來源」表單、指派多位處理人（來自人員主檔單一事實來源）、佐證上傳、

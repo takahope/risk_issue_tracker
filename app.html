@@ -1,6 +1,6 @@
 <script>
 /* ============================================================
-   高風險追蹤系統 — 前端應用邏輯
+   風險追蹤管理 — 前端應用邏輯
    原則：薄狀態、依後端 schema 動態渲染表單、可重用人員選擇器。
    ============================================================ */
 
@@ -10,7 +10,7 @@
  * 若看不到此行 → 你開的是舊部署版本（請建立新版本部署）。
  */
 const APP_BUILD = '2026-06-18-i (per-item status + evidence)';
-console.log('[高風險追蹤] 前端版本 ' + APP_BUILD);
+console.log('[風險追蹤管理] 前端版本 ' + APP_BUILD);
 
 /**
  * 將 google.script.run 包成 Promise，讓非同步流程以 async/await 撰寫。
@@ -724,7 +724,7 @@ function buildNotifyTargets_(mode) {
 function emailPreviewHtml() {
   return `
     <div class="mail-preview">
-      <div class="mail-preview__subject">【高風險追蹤】待處理風險通知：〈風險標題〉</div>
+      <div class="mail-preview__subject">【風險追蹤管理】待處理風險通知：〈風險標題〉</div>
       <div class="mail-preview__body">
         <p>〈處理人姓名〉 您好，</p>
         <p>您被指派處理下列尚未結案的風險，請參閱以下內容，於期限前完成處理並更新狀態：</p>
