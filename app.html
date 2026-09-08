@@ -422,6 +422,8 @@ function renderFormForSource(source) {
 
   const schema = State.meta.schemas[source] || State.meta.defaultSchema;
   const baseFields = schema.baseFields || State.meta.defaultSchema.baseFields;
+  const subTableDef = schema.subTable || State.meta.defaultSubTable;
+  const defaultEnabled = !!(schema && schema.subTable);
 
   form.hidden = false;
   form.innerHTML = `
@@ -429,7 +431,18 @@ function renderFormForSource(source) {
       <div class="section-label">風險基本資料</div>
       <div class="form-grid" id="baseFields"></div>
     </div>
-    ${schema.subTable ? subTableSectionHtml(schema.subTable) : ''}
+    <div class="panel" style="margin-top:12px;">
+      <label class="toggle-control">
+        <input type="checkbox" id="chkEnableSubTable" ${defaultEnabled ? 'checked' : ''}>
+        <div>
+          <span class="toggle-control__title">啟用分項管理（矯正缺失單）</span>
+          <span class="muted" style="font-size:12px;margin-left:8px;">（若此風險有多項缺失或需分派不同同仁處理，請勾選此項）</span>
+        </div>
+      </label>
+    </div>
+    <div id="subTableContainer" ${defaultEnabled ? '' : 'hidden'}>
+      ${subTableDef ? subTableSectionHtml(subTableDef) : ''}
+    </div>
     <div class="topbar__actions" style="margin-top:16px;">
       <button type="button" class="btn btn--ghost" onclick="renderCreate()">重設</button>
       <button type="submit" class="btn btn--primary" id="btnCreate">建立風險</button>
@@ -437,12 +450,24 @@ function renderFormForSource(source) {
 
   renderFields($('#baseFields'), baseFields, {});
 
-  if (schema.subTable) {
-    $('#btnAddItem').addEventListener('click', () => addItemCard(schema.subTable));
-    addItemCard(schema.subTable); // 預設帶一個項次
+  if (subTableDef) {
+    const chk = $('#chkEnableSubTable');
+    const container = $('#subTableContainer');
+    $('#btnAddItem').addEventListener('click', () => addItemCard(subTableDef));
+
+    chk.addEventListener('change', () => {
+      container.hidden = !chk.checked;
+      if (chk.checked && $$('#itemsWrap .item-card').length === 0) {
+        addItemCard(subTableDef);
+      }
+    });
+
+    if (defaultEnabled) {
+      addItemCard(subTableDef); // 預設帶一個項次
+    }
   }
 
-  form.addEventListener('submit', (e) => { e.preventDefault(); submitCreate(source, schema); });
+  form.addEventListener('submit', (e) => { e.preventDefault(); submitCreate(source); });
 }
 
 /** 依欄位定義陣列渲染表單欄位（含人員選擇器）。 */
@@ -560,7 +585,7 @@ function renumberItems() {
   $$('#itemsWrap .item-card').forEach((card, i) => { card.querySelector('.item-card__seq').textContent = '項次 ' + (i + 1); });
 }
 
-async function submitCreate(source, schema) {
+async function submitCreate(source) {
   const btn = $('#btnCreate');
   const payload = collectFields($('#baseFields'));
   payload.發現來源 = source;
@@ -568,8 +593,13 @@ async function submitCreate(source, schema) {
   if (!payload.風險標題) return toast('請填寫風險標題', 'err');
   if (!payload.處理人 || payload.處理人.length === 0) return toast('請至少指派一位處理人', 'err');
 
-  if (schema.subTable) {
-    payload.items = $$('#itemsWrap .item-card').map((card, i) => {
+  const isSubTableEnabled = $('#chkEnableSubTable') && $('#chkEnableSubTable').checked;
+  if (isSubTableEnabled) {
+    const cards = $$('#itemsWrap .item-card');
+    if (cards.length === 0) {
+      return toast('您已啟用分項管理，請至少新增一個項次或取消勾選分項管理', 'err');
+    }
+    payload.items = cards.map((card, i) => {
       const item = collectFields($('.item-fields', card));
       item.項次 = i + 1;
       return item;

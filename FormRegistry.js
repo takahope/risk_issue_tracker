@@ -27,6 +27,25 @@ const BASE_FIELDS = [
 ];
 
 /**
+/**
+ * 系統標準通用子表定義（矯正缺失單）。
+ * 支援所有發現來源按需加掛多項次與指派個別處理人。
+ */
+const DEFAULT_SUB_TABLE = {
+  sheet: CONFIG.SUB_SHEET,
+  label: '矯正缺失單',
+  // 每個「項次」一列；項次序號由後端自動建議，故不放在 itemFields
+  itemFields: [
+    { key: 'suggestion', header: '建議改善事項', label: '建議改善事項', type: 'textarea', required: true },
+    { key: 'cause', header: '發生原因', label: '發生原因', type: 'textarea' },
+    { key: 'action', header: '改善措施', label: '改善措施', type: 'textarea' },
+    { key: 'dueDate', header: '預定完成時間', label: '預定完成時間', type: 'date' },
+    { key: 'progress', header: '執行進度', label: '執行進度', type: 'text' },
+    { key: 'handlers', header: '處理人', label: '處理人', type: 'people', multiple: true },
+  ],
+};
+
+/**
  * 預設表單 schema：除了已註冊的特殊來源外，其餘來源都採用此設定。
  */
 const DEFAULT_SCHEMA = {
@@ -37,25 +56,18 @@ const DEFAULT_SCHEMA = {
 
 /**
  * 各「發現來源」的專屬 schema。
- * 目前先實作「上級機關稽核 → 矯正缺失單」一對多子表。
+ * 註冊者預設啟用子表（如上級機關稽核、內部稽核）。
  */
 const FORM_SCHEMAS = {
   '上級機關稽核': {
     base: 'default',
     baseFields: BASE_FIELDS,
-    subTable: {
-      sheet: CONFIG.SUB_SHEET,
-      label: '矯正缺失單',
-      // 每個「項次」一列；項次序號由後端自動建議，故不放在 itemFields
-      itemFields: [
-        { key: 'suggestion', header: '建議改善事項', label: '建議改善事項', type: 'textarea', required: true },
-        { key: 'cause', header: '發生原因', label: '發生原因', type: 'textarea' },
-        { key: 'action', header: '改善措施', label: '改善措施', type: 'textarea' },
-        { key: 'dueDate', header: '預定完成時間', label: '預定完成時間', type: 'date' },
-        { key: 'progress', header: '執行進度', label: '執行進度', type: 'text' },
-        { key: 'handlers', header: '處理人', label: '處理人', type: 'people', multiple: true },
-      ],
-    },
+    subTable: DEFAULT_SUB_TABLE,
+  },
+  '內部稽核': {
+    base: 'default',
+    baseFields: BASE_FIELDS,
+    subTable: DEFAULT_SUB_TABLE,
   },
 };
 
@@ -74,16 +86,17 @@ function getFormSchema(source) {
 /**
  * 提供前端建立「新增風險」表單所需的完整中繼資料。
  *
- * 一次回傳所有來源的選項、各來源 schema、以及人員清單，
- * 讓前端切換來源時可即時重繪，不需往返後端。
+ * 一次回傳所有來源的選項、各來源 schema、通用子表定義以及人員清單，
+ * 讓前端切換來源與開關時可即時重繪，不需往返後端。
  *
- * @returns {Object} { sources, options, schemas, people }
+ * @returns {Object} { sources, options, defaultSchema, defaultSubTable, schemas, people }
  */
 function getFormMetadata() {
   return {
     sources: CONFIG.OPTIONS.SOURCES,
     options: CONFIG.OPTIONS,
     defaultSchema: DEFAULT_SCHEMA,
+    defaultSubTable: DEFAULT_SUB_TABLE,
     schemas: FORM_SCHEMAS,
     people: HrService.listActivePeople(),
   };

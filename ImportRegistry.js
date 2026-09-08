@@ -14,37 +14,40 @@
  *   }
  */
 
-const IMPORT_ADAPTERS = {
-  /**
-   * 上級機關稽核：對應「矯正缺失表」格式
-   * 外部欄位：項次 / 建議改善事項 / 發生原因 / 改善措施 / 預定完成時間 / 執行進度
-   * 此類整份檔案視為「同一筆風險」的多個項次（grouped）。
-   */
-  '上級機關稽核': {
-    grouped: true,
-    columns: {
-      '項次': '項次',
-      '建議改善事項': 'suggestion',
-      '發生原因': 'cause',
-      '改善措施': 'action',
-      '預定完成時間': 'dueDate',
-      '執行進度': 'progress',
-      '處理人': 'handlers',
-    },
-    toItems: function (rowObjects) {
-      return rowObjects.map(function (row, index) {
-        return {
-          項次: row['項次'] || index + 1,
-          suggestion: row['suggestion'] || '',
-          cause: row['cause'] || '',
-          action: row['action'] || '',
-          dueDate: row['dueDate'] || '',
-          progress: row['progress'] || '',
-          handlers: row['handlers'] || '',
-        };
-      });
-    },
+/**
+ * 矯正缺失表通用匯入轉接器（上級機關稽核、內部稽核等）
+ * 外部欄位：項次 / 建議改善事項 / 發生原因 / 改善措施 / 預定完成時間 / 執行進度 / 處理人
+ * 此類整份檔案視為「同一筆風險」的多個項次（grouped）。
+ */
+const CORRECTIVE_ITEMS_ADAPTER = {
+  grouped: true,
+  columns: {
+    '項次': '項次',
+    '建議改善事項': 'suggestion',
+    '發生原因': 'cause',
+    '改善措施': 'action',
+    '預定完成時間': 'dueDate',
+    '執行進度': 'progress',
+    '處理人': 'handlers',
   },
+  toItems: function (rowObjects) {
+    return rowObjects.map(function (row, index) {
+      return {
+        項次: row['項次'] || index + 1,
+        suggestion: row['suggestion'] || '',
+        cause: row['cause'] || '',
+        action: row['action'] || '',
+        dueDate: row['dueDate'] || '',
+        progress: row['progress'] || '',
+        handlers: row['handlers'] || '',
+      };
+    });
+  },
+};
+
+const IMPORT_ADAPTERS = {
+  '上級機關稽核': CORRECTIVE_ITEMS_ADAPTER,
+  '內部稽核': CORRECTIVE_ITEMS_ADAPTER,
 
   /**
    * 預設匯入：直接對應主表欄位，一列一筆風險。

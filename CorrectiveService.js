@@ -46,9 +46,6 @@ const CorrectiveService = (function () {
     deleteByRiskId(riskId);
     if (!Array.isArray(items) || items.length === 0) return;
 
-    const schema = getFormSchema(source);
-    if (!schema.subTable) return; // 此來源無子表則略過
-
     const sheet = SheetRepo.getSubSheet();
     items.forEach((item, index) => {
       const record = toSubRecord_(riskId, item, index + 1);
