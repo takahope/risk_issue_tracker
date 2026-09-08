@@ -294,8 +294,9 @@ async function openRiskDetail(riskId) {
         : manualPanel}
     </div>
     <div class="modal__foot">
-      ${isAdmin ? `<button class="btn btn--danger" id="btnDelete">刪除風險</button>` : ''}
+      ${isAdmin ? `<button class="btn btn--danger" id="btnDelete" style="margin-right:auto;">刪除風險</button>` : ''}
       <button class="btn btn--ghost" data-close>關閉</button>
+      ${isAdmin ? `<button class="btn btn--ghost" id="btnEditRisk">✏ 編輯風險</button>` : ''}
       ${hasItems ? '' : `<button class="btn btn--primary" id="btnSaveDetail">儲存變更</button>`}
     </div>
   `);
@@ -309,7 +310,10 @@ async function openRiskDetail(riskId) {
   } else {
     $('#btnSaveDetail').addEventListener('click', () => saveRiskDetail(riskId));
   }
-  if (isAdmin) $('#btnDelete').addEventListener('click', () => confirmDelete(riskId));
+  if (isAdmin) {
+    $('#btnEditRisk').addEventListener('click', () => renderRiskEditMode(riskId));
+    $('#btnDelete').addEventListener('click', () => confirmDelete(riskId));
+  }
 }
 
 /** 單一項次卡片：唯讀內容 + 狀態下拉 + 既有佐證 + 上傳 + 「儲存此項次」。 */
@@ -395,6 +399,124 @@ function confirmDelete(riskId) {
     try { await gas('api_deleteRisk', riskId); toast('已刪除', 'ok'); closeModal(); renderList(); }
     catch (err) { toast(err.message || err, 'err'); }
   });
+}
+
+// ── 管理者編輯風險模式 ──
+function renderRiskEditMode(riskId) {
+  PEOPLE_PICKERS.length = 0;
+  const r = State.risks.find((x) => x['風險ID'] === riskId);
+  if (!r) return;
+
+  const editFields = [
+    { key: '發現來源', label: '發現來源', type: 'select', required: true, optionsKey: 'SOURCES' },
+    { key: '風險標題', label: '風險標題', type: 'text', required: true },
+    { key: '風險描述', label: '風險描述', type: 'textarea', required: true },
+    { key: '風險等級', label: '風險等級', type: 'select', required: true, optionsKey: 'LEVELS' },
+    { key: '處理方式', label: '處理方式', type: 'select', required: true, optionsKey: 'TREATMENTS' },
+    { key: '當前狀態', label: '當前狀態', type: 'select', required: true, optionsKey: 'STATUSES' },
+    { key: '處理人', label: '處理人', type: 'people', multiple: true, required: true },
+    { key: '預計完成日', label: '預計完成日', type: 'date' },
+  ];
+
+  const subTableDef = State.meta.defaultSubTable;
+  const items = r.items || [];
+  const defaultEnabled = items.length > 0;
+
+  openModal(`
+    <div class="modal__head">
+      <div>
+        <div class="modal__title">編輯風險</div>
+        <div class="mono muted" style="font-size:12px;">${esc(r['風險ID'])}</div>
+      </div>
+      <button class="icon-btn" data-close>×</button>
+    </div>
+    <div class="modal__body">
+      <div class="panel">
+        <div class="section-label">風險基本資料</div>
+        <div class="form-grid" id="editBaseFields"></div>
+      </div>
+      <div class="panel" style="margin-top:12px;">
+        <label class="toggle-control">
+          <input type="checkbox" id="chkEditSubTable" ${defaultEnabled ? 'checked' : ''}>
+          <div>
+            <span class="toggle-control__title">啟用分項管理（矯正缺失單）</span>
+            <span class="muted" style="font-size:12px;margin-left:8px;">（若此風險有多項缺失或需分派不同同仁處理，請勾選此項）</span>
+          </div>
+        </label>
+      </div>
+      <div id="editSubTableContainer" ${defaultEnabled ? '' : 'hidden'}>
+        ${subTableDef ? subTableSectionHtml(subTableDef, 'editItemsWrap', 'btnEditAddItem') : ''}
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="btn btn--ghost" id="btnCancelEdit">取消</button>
+      <button class="btn btn--primary" id="btnSaveEdit">儲存修改</button>
+    </div>
+  `);
+
+  renderFields($('#editBaseFields'), editFields, r);
+
+  if (subTableDef) {
+    const chk = $('#chkEditSubTable');
+    const container = $('#editSubTableContainer');
+    $('#btnEditAddItem').addEventListener('click', () => addItemCard(subTableDef, null, 'editItemsWrap'));
+
+    chk.addEventListener('change', () => {
+      container.hidden = !chk.checked;
+      if (chk.checked && $$('#editItemsWrap .item-card').length === 0) {
+        addItemCard(subTableDef, null, 'editItemsWrap');
+      }
+    });
+
+    if (items.length > 0) {
+      items.forEach((it) => addItemCard(subTableDef, it, 'editItemsWrap'));
+    }
+  }
+
+  $('#btnCancelEdit').addEventListener('click', () => openRiskDetail(riskId));
+  $('#btnSaveEdit').addEventListener('click', () => submitUpdateRisk(riskId));
+}
+
+async function submitUpdateRisk(riskId) {
+  const btn = $('#btnSaveEdit');
+  const payload = collectFields($('#editBaseFields'));
+
+  if (!payload.風險標題) return toast('請填寫風險標題', 'err');
+  if (!payload.處理人 || payload.處理人.length === 0) return toast('請至少指派一位處理人', 'err');
+
+  const isSubTableEnabled = $('#chkEditSubTable') && $('#chkEditSubTable').checked;
+  if (isSubTableEnabled) {
+    const cards = $$('#editItemsWrap .item-card');
+    if (cards.length === 0) {
+      return toast('您已啟用分項管理，請至少新增一個項次或取消勾選分項管理', 'err');
+    }
+    payload.items = cards.map((card, i) => {
+      const item = collectFields($('.item-fields', card));
+      item.項次 = i + 1;
+      if (card.dataset.status) item.狀態 = card.dataset.status;
+      if (card.dataset.evidence) item.佐證連結 = card.dataset.evidence;
+      return item;
+    });
+  } else {
+    payload.items = [];
+  }
+
+  setLoading(btn, true);
+  try {
+    const updated = await gas('api_updateRisk', riskId, payload);
+    const idx = State.risks.findIndex((x) => x['風險ID'] === riskId);
+    if (idx !== -1 && updated) {
+      State.risks[idx] = updated;
+    }
+    State.risks = await gas('api_listRisks');
+    if ($('#riskGrid')) applyFilters();
+    toast('已儲存修改', 'ok');
+    openRiskDetail(riskId);
+  } catch (err) {
+    toast(err.message || err, 'err');
+  } finally {
+    setLoading(btn, false);
+  }
 }
 
 // ════════════════════════════════════════
@@ -554,22 +676,27 @@ function buildPeoplePicker(field, preset) {
 }
 
 // ── 子表項次 ──
-function subTableSectionHtml(subTable) {
+function subTableSectionHtml(subTable, wrapId = 'itemsWrap', btnId = 'btnAddItem') {
   return `
     <div class="panel">
       <div class="panel__head">
         <div class="section-label" style="margin:0;">${esc(subTable.label)}（可新增多個項次）</div>
-        <button type="button" class="btn btn--ghost btn--sm" id="btnAddItem">＋ 新增項次</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="${btnId}">＋ 新增項次</button>
       </div>
-      <div class="items" id="itemsWrap"></div>
+      <div class="items" id="${wrapId}"></div>
     </div>`;
 }
 
-function addItemCard(subTable) {
-  const wrap = $('#itemsWrap');
+function addItemCard(subTable, itemPreset, wrapId = 'itemsWrap') {
+  const wrap = document.getElementById(wrapId);
+  if (!wrap) return;
   const seq = wrap.children.length + 1;
   const card = document.createElement('div');
   card.className = 'item-card';
+  if (itemPreset) {
+    if (itemPreset['狀態'] || itemPreset.status) card.dataset.status = itemPreset['狀態'] || itemPreset.status;
+    if (itemPreset['佐證連結'] || itemPreset.evidence) card.dataset.evidence = itemPreset['佐證連結'] || itemPreset.evidence;
+  }
   card.innerHTML = `
     <div class="item-card__head">
       <span class="item-card__seq">項次 ${seq}</span>
@@ -577,12 +704,22 @@ function addItemCard(subTable) {
     </div>
     <div class="form-grid item-fields"></div>`;
   wrap.appendChild(card);
-  renderFields($('.item-fields', card), subTable.itemFields, {});
-  card.querySelector('.btn-remove').addEventListener('click', () => { card.remove(); renumberItems(); });
+
+  const values = itemPreset ? {
+    suggestion: itemPreset['建議改善事項'] ?? itemPreset.suggestion ?? '',
+    cause: itemPreset['發生原因'] ?? itemPreset.cause ?? '',
+    action: itemPreset['改善措施'] ?? itemPreset.action ?? '',
+    dueDate: itemPreset['預定完成時間'] ?? itemPreset.dueDate ?? '',
+    progress: itemPreset['執行進度'] ?? itemPreset.progress ?? '',
+    handlers: itemPreset['處理人'] ?? itemPreset.handlers ?? '',
+  } : {};
+
+  renderFields($('.item-fields', card), subTable.itemFields, values);
+  card.querySelector('.btn-remove').addEventListener('click', () => { card.remove(); renumberItems(wrapId); });
 }
 
-function renumberItems() {
-  $$('#itemsWrap .item-card').forEach((card, i) => { card.querySelector('.item-card__seq').textContent = '項次 ' + (i + 1); });
+function renumberItems(wrapId = 'itemsWrap') {
+  $$('#' + wrapId + ' .item-card').forEach((card, i) => { card.querySelector('.item-card__seq').textContent = '項次 ' + (i + 1); });
 }
 
 async function submitCreate(source) {
