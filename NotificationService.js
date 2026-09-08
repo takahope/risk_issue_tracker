@@ -245,10 +245,11 @@ const NotificationService = (function () {
   }
 
   function row_(label, value) {
+    const formatted = escapeHtml_(String(value || '')).replace(/\r?\n/g, '<br>');
     return (
       '<tr>' +
       '<td style="padding:4px 12px;background:#f6f8f5;color:#5f6d66;white-space:nowrap;vertical-align:top;">' + escapeHtml_(label) + '</td>' +
-      '<td style="padding:4px 12px;">' + escapeHtml_(String(value || '')) + '</td>' +
+      '<td style="padding:4px 12px;border-bottom:1px solid #f0f2ef;word-break:break-word;white-space:pre-wrap;line-height:1.6;">' + formatted + '</td>' +
       '</tr>'
     );
   }
